@@ -46,10 +46,10 @@ class TestScaffolder(unittest.TestCase):
         expected_path = os.path.join(os.getcwd(), server_name)
 
         # Call the function
-        path = scaffold_server(name=server_name)
+        path = scaffold_server(output_dir=os.getcwd(), server_name=server_name)
 
         # Verify the function returned the expected path
-        self.assertEqual(path, expected_path)
+        self.assertEqual(path["path"], expected_path)
 
         # Verify makedirs was called multiple times
         self.assertTrue(mock_makedirs.call_count >= 1)
@@ -70,10 +70,16 @@ class TestScaffolder(unittest.TestCase):
         expected_path = os.path.join(os.getcwd(), server_name)
 
         # Call the function
-        path = scaffold_server(name=server_name, config=config)
+        path = scaffold_server(
+            output_dir=os.getcwd(),
+            server_name=server_name,
+            description="Test server",
+            author="Test Author",
+            email="test@example.com",
+        )
 
         # Verify the function returned the expected path
-        self.assertEqual(path, expected_path)
+        self.assertEqual(path["path"], expected_path)
 
         # Verify makedirs was called multiple times
         self.assertTrue(mock_makedirs.call_count >= 1)

@@ -24,7 +24,7 @@ logger = logging.getLogger("test_end_to_end_server")
 from fluent_mcp import create_mcp_server
 from fluent_mcp.core import (
     LLMClient,
-    MCPServer,
+    Server,
     configure_llm_client,
     get_llm_client,
     register_embedded_tool,

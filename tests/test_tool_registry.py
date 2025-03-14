@@ -20,14 +20,12 @@ logger = logging.getLogger("test_tool_registry")
 
 
 # Define some test tools
-@register_embedded_tool()
-def test_tool_1(param1: str, param2: int = 42) -> str:
+def tool_1(param1: str, param2: int = 42) -> str:
     """A test tool that concatenates a string and an integer."""
     return f"{param1} {param2}"
 
 
-@register_embedded_tool(name="custom_name_tool")
-def test_tool_2(items: List[str], flag: bool = False) -> Dict[str, Any]:
+def tool_2(items: List[str], flag: bool = False) -> Dict[str, Any]:
     """A test tool that processes a list of items."""
     return {"items": items, "count": len(items), "flag": flag}
 
@@ -41,26 +39,26 @@ class TestToolRegistry(unittest.TestCase):
         _embedded_tools.clear()
 
         # Re-register the test tools
-        global test_tool_1, test_tool_2
-        test_tool_1 = register_embedded_tool()(test_tool_1)
-        test_tool_2 = register_embedded_tool(name="custom_name_tool")(test_tool_2)
+        global tool_1, tool_2
+        tool_1 = register_embedded_tool()(tool_1)
+        tool_2 = register_embedded_tool(name="custom_name_tool")(tool_2)
 
     def test_register_embedded_tool(self):
         """Test registering an embedded tool."""
         # Check that the tools were registered
-        self.assertIn("test_tool_1", _embedded_tools)
+        self.assertIn("tool_1", _embedded_tools)
         self.assertIn("custom_name_tool", _embedded_tools)
 
         # Check that the functions are preserved
-        self.assertEqual(test_tool_1("hello", 123), "hello 123")
+        self.assertEqual(tool_1("hello", 123), "hello 123")
 
-        result = test_tool_2(["a", "b", "c"], True)
+        result = tool_2(["a", "b", "c"], True)
         self.assertEqual(result["count"], 3)
         self.assertTrue(result["flag"])
 
     def test_get_embedded_tool(self):
         """Test getting an embedded tool."""
-        tool = get_embedded_tool("test_tool_1")
+        tool = get_embedded_tool("tool_1")
         self.assertIsNotNone(tool)
         self.assertEqual(tool("hello", 123), "hello 123")
 
@@ -74,7 +72,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_list_embedded_tools(self):
         """Test listing embedded tools."""
         tools = list_embedded_tools()
-        self.assertIn("test_tool_1", tools)
+        self.assertIn("tool_1", tools)
         self.assertIn("custom_name_tool", tools)
         self.assertEqual(len(tools), 2)
 
@@ -84,7 +82,7 @@ class TestToolRegistry(unittest.TestCase):
         self.assertEqual(len(tools), 2)
 
         # Check the first tool
-        tool1 = next(t for t in tools if t["function"]["name"] == "test_tool_1")
+        tool1 = next(t for t in tools if t["function"]["name"] == "tool_1")
         self.assertEqual(tool1["type"], "function")
         self.assertIn("A test tool that concatenates", tool1["function"]["description"])
 
