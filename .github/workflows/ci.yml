@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]  # adjust versions as needed
+      fail-fast: false  # Continue with other Python versions if one fails
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'  # Cache pip dependencies
+
+      - name: Install uv
+        run: |
+          pip install uv
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e .[dev,test]  # Install with dev and test extras
+          uv pip install pytest pytest-cov  # Ensure test dependencies are installed
+
+      - name: Run tests
+        run: |
+          uv run pytest tests/ --cov=fluent_mcp --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+      - name: Report success
+        if: success()
+        run: echo "✅ Tests passed successfully!"
+
+      - name: Report failure
+        if: failure()
+        run: echo "❌ Tests failed. Please check the logs."
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          
+      - name: Install uv
+        run: |
+          pip install uv
+          
+      - name: Install linting tools
+        run: |
+          uv pip install flake8 black isort
+          
+      - name: Run linters
+        run: |
+          uv run flake8 fluent_mcp/ tests/
+          uv run black --check fluent_mcp/ tests/
+          uv run isort --check fluent_mcp/ tests/ 
