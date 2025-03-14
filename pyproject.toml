@@ -21,7 +21,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "openai>=1.0.0",
     "pyyaml>=6.0",
-    "mcp[cli] @ git+https://github.com/modelcontextprotocol/mcp.git@main"  # <-- Direct GitHub link to MCP
+    "mcp[cli] @ git+https://github.com/modelcontextprotocol/python-sdk.git@main"  # <-- Direct GitHub link to MCP
 ]
 
 [project.optional-dependencies]
