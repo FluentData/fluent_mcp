@@ -13,6 +13,9 @@ from typing import Dict, Any, List, Callable, Optional, get_type_hints, Union, g
 # Global registry for embedded tools
 _embedded_tools = {}
 
+# Global registry for external tools
+_external_tools = {}
+
 logger = logging.getLogger("fluent_mcp.tool_registry")
 
 def register_embedded_tool(name: Optional[str] = None):
@@ -41,6 +44,34 @@ def register_embedded_tool(name: Optional[str] = None):
     
     return decorator
 
+def register_external_tool(name: Optional[str] = None):
+    """
+    Decorator to register a function as an external tool.
+    
+    External tools are exposed to AI coders through Claude or other MCP frontends.
+    
+    Args:
+        name: Optional name for the tool. If not provided, the function name will be used.
+        
+    Returns:
+        The decorated function.
+    """
+    def decorator(func):
+        nonlocal name
+        tool_name = name or func.__name__
+        
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
+        
+        # Register the tool
+        _external_tools[tool_name] = wrapper
+        logger.info(f"Registered external tool: {tool_name}")
+        
+        return wrapper
+    
+    return decorator
+
 def get_embedded_tool(name: str) -> Optional[Callable]:
     """
     Get an embedded tool by name.
@@ -59,6 +90,24 @@ def get_embedded_tool(name: str) -> Optional[Callable]:
     
     return tool
 
+def get_external_tool(name: str) -> Optional[Callable]:
+    """
+    Get an external tool by name.
+    
+    Args:
+        name: The name of the tool to retrieve.
+        
+    Returns:
+        The tool function if found, None otherwise.
+    """
+    tool = _external_tools.get(name)
+    if tool:
+        logger.debug(f"Retrieved external tool: {name}")
+    else:
+        logger.warning(f"External tool not found: {name}")
+    
+    return tool
+
 def list_embedded_tools() -> List[str]:
     """
     List all registered embedded tool names.
@@ -67,6 +116,15 @@ def list_embedded_tools() -> List[str]:
         A list of registered tool names.
     """
     return list(_embedded_tools.keys())
+
+def list_external_tools() -> List[str]:
+    """
+    List all registered external tool names.
+    
+    Returns:
+        A list of registered external tool names.
+    """
+    return list(_external_tools.keys())
 
 def _get_parameter_schema(param: inspect.Parameter) -> Dict[str, Any]:
     """
@@ -121,14 +179,35 @@ def _get_parameter_schema(param: inspect.Parameter) -> Dict[str, Any]:
 
 def get_tools_as_openai_format() -> List[Dict[str, Any]]:
     """
-    Get all registered tools in OpenAI function calling format.
+    Get all registered embedded tools in OpenAI function calling format.
     
+    Returns:
+        A list of tools formatted for OpenAI's function calling API.
+    """
+    return _get_tools_as_openai_format(_embedded_tools)
+
+def get_external_tools_as_openai_format() -> List[Dict[str, Any]]:
+    """
+    Get all registered external tools in OpenAI function calling format.
+    
+    Returns:
+        A list of external tools formatted for OpenAI's function calling API.
+    """
+    return _get_tools_as_openai_format(_external_tools)
+
+def _get_tools_as_openai_format(tools_dict: Dict[str, Callable]) -> List[Dict[str, Any]]:
+    """
+    Convert a dictionary of tools to OpenAI function calling format.
+    
+    Args:
+        tools_dict: Dictionary of tool name to tool function
+        
     Returns:
         A list of tools formatted for OpenAI's function calling API.
     """
     tools = []
     
-    for name, func in _embedded_tools.items():
+    for name, func in tools_dict.items():
         # Get function signature and docstring
         sig = inspect.signature(func)
         doc = inspect.getdoc(func) or "No description available."
@@ -175,4 +254,24 @@ def register_tool(tool: Callable) -> None:
     """
     tool_name = getattr(tool, "__name__", str(tool))
     _embedded_tools[tool_name] = tool
-    logger.info(f"Registered embedded tool: {tool_name}") 
+    logger.info(f"Registered embedded tool: {tool_name}")
+
+def register_external_tools(tools: List[Callable]) -> None:
+    """
+    Register a list of external tools with the tool registry.
+    
+    Args:
+        tools: List of tool functions to register as external tools
+    """
+    if not tools:
+        logger.warning("No external tools provided for registration")
+        return
+    
+    logger.info(f"Registering {len(tools)} external tools with the tool registry")
+    for tool in tools:
+        if callable(tool):
+            tool_name = getattr(tool, "__name__", str(tool))
+            _external_tools[tool_name] = tool
+            logger.info(f"Registered external tool: {tool_name}")
+        else:
+            logger.warning(f"Skipping non-callable external tool: {tool}") 

@@ -13,7 +13,13 @@ from typing import Dict, Any, Optional, List, Callable, Union, TextIO
 from contextlib import asynccontextmanager
 
 from fluent_mcp.core.llm_client import configure_llm_client, LLMClientError
-from fluent_mcp.core.tool_registry import register_tool, get_embedded_tool, list_embedded_tools
+from fluent_mcp.core.tool_registry import (
+    register_tool, 
+    get_embedded_tool, 
+    list_embedded_tools, 
+    register_external_tools
+)
+from fluent_mcp.core.prompt_loader import load_prompts
 
 
 class Server:
@@ -199,6 +205,7 @@ def create_mcp_server(
     embedded_tools: list = None,
     external_tools: list = None,
     prompts: list = None,
+    prompts_dir: str = None,
     config: dict = None
 ) -> Server:
     """
@@ -209,6 +216,7 @@ def create_mcp_server(
         embedded_tools: List of embedded tools to register with the server
         external_tools: List of external tools to register with the server
         prompts: List of prompts to register with the server
+        prompts_dir: Directory containing prompt files to load
         config: Configuration dictionary for the server
         
     Returns:
@@ -237,6 +245,9 @@ def create_mcp_server(
     # Register embedded tools with the tool registry
     register_embedded_tools(embedded_tools)
     
+    # Register external tools with the tool registry
+    register_external_tools(external_tools)
+    
     # Register embedded tools with the server
     if embedded_tools:
         logger.info(f"Registering {len(embedded_tools)} embedded tools with the server")
@@ -252,6 +263,22 @@ def create_mcp_server(
             server.register_tool(tool)
     else:
         logger.info("No external tools provided")
+    
+    # Load prompts from directory if provided
+    if prompts_dir:
+        logger.info(f"Loading prompts from directory: {prompts_dir}")
+        try:
+            loaded_prompts = load_prompts(prompts_dir)
+            if loaded_prompts:
+                logger.info(f"Loaded {len(loaded_prompts)} prompts from {prompts_dir}")
+                # Add loaded prompts to the provided prompts list
+                if prompts is None:
+                    prompts = []
+                prompts.extend(loaded_prompts)
+            else:
+                logger.warning(f"No prompts found in directory: {prompts_dir}")
+        except Exception as e:
+            logger.error(f"Error loading prompts from directory {prompts_dir}: {str(e)}")
     
     # Load prompts
     if prompts:

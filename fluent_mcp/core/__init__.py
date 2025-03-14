@@ -16,7 +16,19 @@ from fluent_mcp.core.tool_registry import (
     register_embedded_tool,
     get_embedded_tool,
     list_embedded_tools,
-    get_tools_as_openai_format
+    get_tools_as_openai_format,
+    register_external_tool,
+    get_external_tool,
+    list_external_tools,
+    get_external_tools_as_openai_format
+)
+from fluent_mcp.core.prompt_loader import (
+    load_prompts,
+    parse_markdown_with_frontmatter,
+    PromptLoader,
+    PromptLoaderError,
+    InvalidFrontmatterError,
+    MissingRequiredFieldError
 )
 
 __all__ = [
@@ -29,4 +41,14 @@ __all__ = [
     "get_embedded_tool",
     "list_embedded_tools",
     "get_tools_as_openai_format",
+    "register_external_tool",
+    "get_external_tool",
+    "list_external_tools",
+    "get_external_tools_as_openai_format",
+    "load_prompts",
+    "parse_markdown_with_frontmatter",
+    "PromptLoader",
+    "PromptLoaderError",
+    "InvalidFrontmatterError",
+    "MissingRequiredFieldError",
 ]
