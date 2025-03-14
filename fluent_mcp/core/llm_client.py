@@ -7,6 +7,8 @@ from various providers.
 
 import logging
 import os
+import json
+import httpx
 from typing import Dict, Any, Optional, Union, List
 
 # Global client instance
@@ -57,9 +59,9 @@ class LLMClient:
         # Validate provider-specific requirements
         if self.provider == "ollama":
             if not self.base_url:
-                error_msg = "Base URL is required for Ollama provider"
-                self.logger.error(error_msg)
-                raise LLMClientConfigError(error_msg)
+                # Default Ollama base URL
+                self.base_url = "http://localhost:11434"
+                self.logger.info(f"Using default Ollama base URL: {self.base_url}")
             # For Ollama, api_key can be a dummy value
             if not self.api_key:
                 self.api_key = "ollama"
@@ -109,6 +111,190 @@ class LLMClient:
             self.logger.error(error_msg)
             raise LLMClientConfigError(error_msg)
 
+    async def generate(self, prompt: str, options: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Generate text from the language model.
+        
+        Args:
+            prompt: The prompt to send to the model
+            options: Additional options for the generation
+            
+        Returns:
+            The generated text
+        """
+        # TODO: Implement generation logic
+        options = options or {}
+        
+        print(f"Generating with {self.provider}/{self.model}: {prompt[:50]}...")
+        return f"Generated response for: {prompt[:20]}..."
+        
+    async def chat(self, messages: List[Dict[str, str]], options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Chat with the language model.
+        
+        Args:
+            messages: List of messages in the conversation
+            options: Additional options for the chat
+            
+        Returns:
+            The model's response
+        """
+        # TODO: Implement chat logic
+        options = options or {}
+        
+        print(f"Chatting with {self.provider}/{self.model}: {len(messages)} messages")
+        return {
+            "role": "assistant",
+            "content": f"Chat response for {len(messages)} messages"
+        }
+    
+    async def chat_completion(self, 
+                             messages: List[Dict[str, str]], 
+                             tools: Optional[List[Dict[str, Any]]] = None, 
+                             temperature: float = 0.3, 
+                             max_tokens: int = 1000) -> Dict[str, Any]:
+        """
+        Create a chat completion with the language model.
+        
+        Args:
+            messages: List of messages in the conversation
+            tools: List of tools to make available to the model
+            temperature: Sampling temperature (0-1)
+            max_tokens: Maximum number of tokens to generate
+            
+        Returns:
+            A dictionary containing the response and any tool calls
+        """
+        self.logger.debug(f"Creating chat completion with {len(messages)} messages")
+        
+        result = {
+            "status": "complete",
+            "content": "",
+            "tool_calls": [],
+            "error": None
+        }
+        
+        try:
+            # Prepare the request parameters
+            params = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            
+            # Add tools if provided
+            if tools:
+                params["tools"] = tools
+                self.logger.debug(f"Including {len(tools)} tools in the request")
+            
+            # Make the API call
+            response = await self._call_chat_completion_api(params)
+            
+            # Extract the content and tool calls
+            if response and hasattr(response, 'choices') and len(response.choices) > 0:
+                message = response.choices[0].message
+                
+                # Extract content
+                result["content"] = message.content or ""
+                
+                # Extract tool calls if any
+                if hasattr(message, 'tool_calls') and message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        try:
+                            # Parse the function arguments
+                            arguments = json.loads(tool_call.function.arguments)
+                            
+                            # Add to result
+                            result["tool_calls"].append({
+                                "id": tool_call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": arguments
+                                }
+                            })
+                        except json.JSONDecodeError as e:
+                            self.logger.warning(f"Failed to parse tool call arguments: {e}")
+                            # Include the raw arguments
+                            result["tool_calls"].append({
+                                "id": tool_call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": tool_call.function.arguments
+                                }
+                            })
+            else:
+                self.logger.warning("Received empty or invalid response from LLM")
+                result["status"] = "error"
+                result["error"] = "Empty or invalid response from LLM"
+                
+        except Exception as e:
+            self.logger.error(f"Error in chat completion: {str(e)}")
+            result["status"] = "error"
+            result["error"] = str(e)
+        
+        return result
+    
+    async def _call_chat_completion_api(self, params: Dict[str, Any]) -> Any:
+        """
+        Call the chat completions API with the given parameters.
+        
+        Args:
+            params: The parameters for the API call
+            
+        Returns:
+            The API response
+        """
+        try:
+            # For Ollama, we need to handle the API differently
+            if self.provider == "ollama":
+                # Check if we're using the correct endpoint
+                if "/api" not in self.base_url:
+                    # Use the direct Ollama API endpoint
+                    async with httpx.AsyncClient() as client:
+                        response = await client.post(
+                            f"{self.base_url}/api/chat",
+                            json={
+                                "model": self.model,
+                                "messages": params["messages"],
+                                "options": {
+                                    "temperature": params.get("temperature", 0.3),
+                                },
+                                "stream": False
+                            }
+                        )
+                        
+                        if response.status_code != 200:
+                            self.logger.error(f"Ollama API error: {response.text}")
+                            raise Exception(f"Ollama API error: {response.text}")
+                        
+                        data = response.json()
+                        
+                        # Convert to OpenAI-like format
+                        return type('OllamaResponse', (), {
+                            'choices': [
+                                type('Choice', (), {
+                                    'message': type('Message', (), {
+                                        'content': data.get('message', {}).get('content', ''),
+                                        'tool_calls': []  # Ollama doesn't support tool calls yet
+                                    })
+                                })
+                            ]
+                        })
+                else:
+                    # Use the OpenAI-compatible endpoint
+                    response = self._client.chat.completions.create(**params)
+                    return response
+            else:
+                # For other providers, use the standard OpenAI client
+                response = self._client.chat.completions.create(**params)
+                return response
+        except Exception as e:
+            self.logger.error(f"API call failed: {str(e)}")
+            raise
+
 def configure_llm_client(config: Dict[str, Any]) -> LLMClient:
     """
     Configure the global LLM client.
@@ -149,39 +335,65 @@ def get_llm_client() -> LLMClient:
     
     return _llm_client
 
-    async def generate(self, prompt: str, options: Optional[Dict[str, Any]] = None) -> str:
-        """
-        Generate text from the language model.
+async def run_embedded_reasoning(
+    system_prompt: str,
+    user_prompt: str,
+    tools: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """
+    Run embedded reasoning with the language model.
+    
+    Args:
+        system_prompt: The system prompt to provide context
+        user_prompt: The user prompt to process
+        tools: Optional list of tools to make available to the model
         
-        Args:
-            prompt: The prompt to send to the model
-            options: Additional options for the generation
-            
-        Returns:
-            The generated text
-        """
-        # TODO: Implement generation logic
-        options = options or {}
+    Returns:
+        A dictionary containing the response and any tool calls
+    """
+    logger = logging.getLogger("fluent_mcp.llm_client")
+    logger.info("Running embedded reasoning")
+    
+    result = {
+        "status": "error",
+        "content": "",
+        "tool_calls": [],
+        "error": "LLM client not configured"
+    }
+    
+    try:
+        # Get the LLM client
+        client = get_llm_client()
         
-        print(f"Generating with {self.provider}/{self.model}: {prompt[:50]}...")
-        return f"Generated response for: {prompt[:20]}..."
+        # If tools is None, get all registered embedded tools
+        if tools is None:
+            from fluent_mcp.core.tool_registry import get_tools_as_openai_format
+            tools = get_tools_as_openai_format()
+            logger.info(f"Using {len(tools)} registered embedded tools")
         
-    async def chat(self, messages: List[Dict[str, str]], options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Chat with the language model.
+        # Prepare the messages
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
         
-        Args:
-            messages: List of messages in the conversation
-            options: Additional options for the chat
-            
-        Returns:
-            The model's response
-        """
-        # TODO: Implement chat logic
-        options = options or {}
+        # Call chat completion
+        result = await client.chat_completion(
+            messages=messages,
+            tools=tools,
+            temperature=0.3,
+            max_tokens=1000
+        )
         
-        print(f"Chatting with {self.provider}/{self.model}: {len(messages)} messages")
-        return {
-            "role": "assistant",
-            "content": f"Chat response for {len(messages)} messages"
-        }
+        logger.info("Embedded reasoning completed successfully")
+        if result["tool_calls"]:
+            logger.info(f"Model made {len(result['tool_calls'])} tool calls")
+        
+    except LLMClientNotConfiguredError as e:
+        logger.error(f"LLM client not configured: {str(e)}")
+        result["error"] = str(e)
+    except Exception as e:
+        logger.error(f"Error in embedded reasoning: {str(e)}")
+        result["error"] = str(e)
+    
+    return result

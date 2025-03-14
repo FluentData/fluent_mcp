@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional, List, Callable, Union, TextIO
 from contextlib import asynccontextmanager
 
 from fluent_mcp.core.llm_client import configure_llm_client, LLMClientError
+from fluent_mcp.core.tool_registry import register_tool, get_embedded_tool, list_embedded_tools
 
 
 class Server:
@@ -58,6 +59,10 @@ class Server:
         """
         self.logger.info(f"Registering tool: {getattr(tool, 'name', str(tool))}")
         self.tools.append(tool)
+        
+        # Also register with the tool registry if it's a callable
+        if callable(tool):
+            register_tool(tool)
         
     def load_prompt(self, prompt: Any) -> None:
         """
@@ -139,6 +144,15 @@ class Server:
         if not self.llm_configured:
             self.logger.warning("LLM client is not configured. Some functionality may be limited.")
         
+        # Log available tools
+        if self.tools:
+            self.logger.info(f"Server has {len(self.tools)} tools registered")
+            registered_tools = list_embedded_tools()
+            if registered_tools:
+                self.logger.info(f"Available embedded tools: {', '.join(registered_tools)}")
+        else:
+            self.logger.warning("No tools registered with the server")
+        
         async def main():
             async with self.lifespan():
                 while True:
@@ -157,6 +171,27 @@ class Server:
             self.logger.info("Server stopped by user")
         except Exception as e:
             self.logger.exception(f"Error running server: {e}")
+
+
+def register_embedded_tools(tools: List[Callable]) -> None:
+    """
+    Register a list of embedded tools with the tool registry.
+    
+    Args:
+        tools: List of tool functions to register
+    """
+    logger = logging.getLogger("fluent_mcp.server")
+    
+    if not tools:
+        logger.warning("No embedded tools provided for registration")
+        return
+    
+    logger.info(f"Registering {len(tools)} embedded tools with the tool registry")
+    for tool in tools:
+        if callable(tool):
+            register_tool(tool)
+        else:
+            logger.warning(f"Skipping non-callable tool: {tool}")
 
 
 def create_mcp_server(
@@ -199,23 +234,32 @@ def create_mcp_server(
     else:
         logger.warning("LLM configuration incomplete. Server will run without LLM capabilities.")
     
-    # Register embedded tools
+    # Register embedded tools with the tool registry
+    register_embedded_tools(embedded_tools)
+    
+    # Register embedded tools with the server
     if embedded_tools:
-        logger.info(f"Registering {len(embedded_tools)} embedded tools")
+        logger.info(f"Registering {len(embedded_tools)} embedded tools with the server")
         for tool in embedded_tools:
             server.register_tool(tool)
+    else:
+        logger.warning("No embedded tools provided")
     
     # Register external tools
     if external_tools:
         logger.info(f"Registering {len(external_tools)} external tools")
         for tool in external_tools:
             server.register_tool(tool)
+    else:
+        logger.info("No external tools provided")
     
     # Load prompts
     if prompts:
         logger.info(f"Loading {len(prompts)} prompts")
         for prompt in prompts:
             server.load_prompt(prompt)
+    else:
+        logger.info("No prompts provided")
     
     logger.info(f"MCP server '{server_name}' created successfully")
     return server 

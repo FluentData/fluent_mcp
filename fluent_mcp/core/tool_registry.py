@@ -1,95 +1,178 @@
 """
-Tool registry for MCP.
+Tool registry for Fluent MCP.
 
-This module provides a registry for tools that can be used by the LLM.
+This module provides functionality for registering and retrieving
+embedded tools that can be used by the MCP server.
 """
 
-from typing import Dict, Any, List, Callable, Optional
+import inspect
+import logging
+import functools
+from typing import Dict, Any, List, Callable, Optional, get_type_hints, Union, get_origin, get_args
 
+# Global registry for embedded tools
+_embedded_tools = {}
 
-class Tool:
+logger = logging.getLogger("fluent_mcp.tool_registry")
+
+def register_embedded_tool(name: Optional[str] = None):
     """
-    A tool that can be used by the LLM.
-    """
+    Decorator to register a function as an embedded tool.
     
-    def __init__(self, name: str, description: str, function: Callable, schema: Optional[Dict[str, Any]] = None):
-        """
-        Initialize a new tool.
+    Args:
+        name: Optional name for the tool. If not provided, the function name will be used.
         
-        Args:
-            name: The name of the tool
-            description: A description of what the tool does
-            function: The function to call when the tool is invoked
-            schema: JSON schema for the tool's parameters
-        """
-        self.name = name
-        self.description = description
-        self.function = function
-        self.schema = schema or {}
+    Returns:
+        The decorated function.
+    """
+    def decorator(func):
+        nonlocal name
+        tool_name = name or func.__name__
         
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert the tool to a dictionary.
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return func(*args, **kwargs)
         
-        Returns:
-            A dictionary representation of the tool
-        """
-        return {
-            "name": self.name,
-            "description": self.description,
-            "schema": self.schema
+        # Register the tool
+        _embedded_tools[tool_name] = wrapper
+        logger.info(f"Registered embedded tool: {tool_name}")
+        
+        return wrapper
+    
+    return decorator
+
+def get_embedded_tool(name: str) -> Optional[Callable]:
+    """
+    Get an embedded tool by name.
+    
+    Args:
+        name: The name of the tool to retrieve.
+        
+    Returns:
+        The tool function if found, None otherwise.
+    """
+    tool = _embedded_tools.get(name)
+    if tool:
+        logger.debug(f"Retrieved embedded tool: {name}")
+    else:
+        logger.warning(f"Embedded tool not found: {name}")
+    
+    return tool
+
+def list_embedded_tools() -> List[str]:
+    """
+    List all registered embedded tool names.
+    
+    Returns:
+        A list of registered tool names.
+    """
+    return list(_embedded_tools.keys())
+
+def _get_parameter_schema(param: inspect.Parameter) -> Dict[str, Any]:
+    """
+    Generate a JSON Schema for a function parameter.
+    
+    Args:
+        param: The parameter to generate a schema for.
+        
+    Returns:
+        A JSON Schema object for the parameter.
+    """
+    schema = {}
+    
+    # Get type annotation if available
+    type_hints = get_type_hints(param.default) if callable(param.default) else {}
+    param_type = type_hints.get('return') if type_hints else param.annotation
+    
+    # Handle different types
+    if param_type is inspect.Parameter.empty:
+        schema["type"] = "string"  # Default to string if no type hint
+    elif param_type is str:
+        schema["type"] = "string"
+    elif param_type is int:
+        schema["type"] = "integer"
+    elif param_type is float:
+        schema["type"] = "number"
+    elif param_type is bool:
+        schema["type"] = "boolean"
+    elif get_origin(param_type) is list or get_origin(param_type) is List:
+        schema["type"] = "array"
+        item_type = get_args(param_type)[0] if get_args(param_type) else "string"
+        if item_type is str:
+            schema["items"] = {"type": "string"}
+        elif item_type is int:
+            schema["items"] = {"type": "integer"}
+        elif item_type is float:
+            schema["items"] = {"type": "number"}
+        elif item_type is bool:
+            schema["items"] = {"type": "boolean"}
+        else:
+            schema["items"] = {"type": "object"}
+    elif get_origin(param_type) is dict or get_origin(param_type) is Dict:
+        schema["type"] = "object"
+    else:
+        schema["type"] = "object"
+    
+    # Handle default values and required status
+    if param.default is not inspect.Parameter.empty:
+        schema["default"] = param.default
+    
+    return schema
+
+def get_tools_as_openai_format() -> List[Dict[str, Any]]:
+    """
+    Get all registered tools in OpenAI function calling format.
+    
+    Returns:
+        A list of tools formatted for OpenAI's function calling API.
+    """
+    tools = []
+    
+    for name, func in _embedded_tools.items():
+        # Get function signature and docstring
+        sig = inspect.signature(func)
+        doc = inspect.getdoc(func) or "No description available."
+        
+        # Create parameters schema
+        parameters = {
+            "type": "object",
+            "properties": {},
+            "required": []
         }
         
-    async def invoke(self, params: Dict[str, Any]) -> Any:
-        """
-        Invoke the tool with the given parameters.
-        
-        Args:
-            params: Parameters for the tool
+        for param_name, param in sig.parameters.items():
+            # Skip self parameter for methods
+            if param_name == "self":
+                continue
+                
+            # Add parameter to schema
+            parameters["properties"][param_name] = _get_parameter_schema(param)
             
-        Returns:
-            The result of the tool invocation
-        """
-        # TODO: Implement parameter validation
-        return await self.function(**params)
-
-
-class ToolRegistry:
-    """
-    Registry for tools that can be used by the LLM.
-    """
+            # Mark as required if no default value
+            if param.default is inspect.Parameter.empty:
+                parameters["required"].append(param_name)
+        
+        # Create tool definition
+        tool = {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": doc,
+                "parameters": parameters
+            }
+        }
+        
+        tools.append(tool)
     
-    def __init__(self):
-        """Initialize a new tool registry."""
-        self.tools: Dict[str, Tool] = {}
-        
-    def register(self, tool: Tool) -> None:
-        """
-        Register a tool.
-        
-        Args:
-            tool: The tool to register
-        """
-        self.tools[tool.name] = tool
-        print(f"Registered tool: {tool.name}")
-        
-    def get(self, name: str) -> Optional[Tool]:
-        """
-        Get a tool by name.
-        
-        Args:
-            name: The name of the tool
-            
-        Returns:
-            The tool, or None if not found
-        """
-        return self.tools.get(name)
-        
-    def list_tools(self) -> List[Dict[str, Any]]:
-        """
-        List all registered tools.
-        
-        Returns:
-            A list of tool dictionaries
-        """
-        return [tool.to_dict() for tool in self.tools.values()] 
+    return tools
+
+def register_tool(tool: Callable) -> None:
+    """
+    Register a tool function directly (non-decorator approach).
+    
+    Args:
+        tool: The tool function to register.
+    """
+    tool_name = getattr(tool, "__name__", str(tool))
+    _embedded_tools[tool_name] = tool
+    logger.info(f"Registered embedded tool: {tool_name}") 
