@@ -1,0 +1,39 @@
+[flake8]
+# Extend line length to something reasonable for modern code (optional)
+max-line-length = 120
+
+# Ignore some minor stylistic warnings that are often noisy
+# W503: Line break before binary operator (conflicts with W504, choose one)
+# E203: Whitespace before ':', black-compatible ignoring (needed for slices)
+# E501: Line too long (handled by black anyway, but here for double insurance)
+# Optional: W292 (no newline at end of file), W291 (trailing whitespace) could be added if needed
+ignore = 
+    W503,
+    E203
+
+# Exclude common directories
+exclude = 
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv
+
+# Enable built-in flake8 plugins (if installed)
+# Optional: You can list specific error codes to focus only on critical issues
+# select = E,F,W,C90
+
+# Add per-file ignores for specific patterns
+per-file-ignores =
+    # Allow unused imports in __init__.py files
+    __init__.py: F401
+    # Allow unused imports and variables in test files
+    tests/*.py: F401,F841
+    # Allow unused imports and variables in example files
+    examples/*.py: F401,F841
+    # Specific ignores for test_end_to_end_server.py
+    tests/test_end_to_end_server.py: E402,W293,E302,F401,F841
+    # Specific ignores for server.py
+    fluent_mcp/core/server.py: F401
+    # Specific ignores for scaffolder.py
+    fluent_mcp/scaffolder.py: W293

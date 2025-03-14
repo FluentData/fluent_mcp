@@ -38,3 +38,21 @@ fluent-mcp = "fluent_mcp.cli:main"
 
 [tool.setuptools]
 packages = ["fluent_mcp"]
+
+[tool.black]
+line-length = 120
+target-version = ['py39', 'py310', 'py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''

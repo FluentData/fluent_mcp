@@ -78,6 +78,6 @@ jobs:
       - name: Run linters
         run: |
           source .venv/bin/activate
-          uv run flake8 fluent_mcp/ tests/
-          uv run black --check fluent_mcp/ tests/
-          uv run isort --check fluent_mcp/ tests/
+          uv run flake8 fluent_mcp/ tests/ examples/
+          uv run black --check fluent_mcp/ tests/ examples/
+          uv run isort --check fluent_mcp/ tests/ examples/
