@@ -13,12 +13,25 @@ from contextlib import asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional, TextIO, Union
 
 from fluent_mcp.core.llm_client import LLMClientError, configure_llm_client
-from fluent_mcp.core.prompt_loader import load_prompts
+from fluent_mcp.core.prompt_loader import get_prompt_budget, load_prompts
 from fluent_mcp.core.tool_registry import (
     list_embedded_tools,
     register_external_tools,
     register_tool,
 )
+
+# Global variable to store the current server instance
+_current_server = None
+
+
+def get_current_server():
+    """
+    Get the current server instance.
+
+    Returns:
+        The current server instance, or None if no server is running
+    """
+    return _current_server
 
 
 class Server:
@@ -56,6 +69,14 @@ class Server:
         self.stdout = stdout
         self.logger = logging.getLogger(f"fluent_mcp.{name}")
         self.llm_configured = False
+
+        # Initialize budget manager if budget configuration is provided
+        self.budget_manager = None
+        if "budget" in config:
+            from fluent_mcp.core.budget import BudgetManager
+
+            self.budget_manager = BudgetManager(config.get("budget", {}).get("default_limits", {}))
+            self.logger.info("Budget manager initialized with default limits")
 
     def register_tool(self, tool: Any) -> None:
         """
@@ -231,6 +252,10 @@ def create_mcp_server(
     config = config or {}
     server = Server(config, name=server_name)
 
+    # Set the current server instance
+    global _current_server
+    _current_server = server
+
     # Configure LLM client if config has necessary LLM settings
     if all(key in config for key in ["provider", "model"]):
         try:
@@ -286,6 +311,14 @@ def create_mcp_server(
         logger.info(f"Loading {len(prompts)} prompts")
         for prompt in prompts:
             server.load_prompt(prompt)
+
+            # Set custom budget limits if specified in the prompt
+            if server.budget_manager and "budget" in prompt["config"]:
+                prompt_budget = get_prompt_budget(prompt)
+                if prompt_budget:
+                    prompt_id = prompt["config"]["name"]
+                    server.budget_manager.set_custom_limits(prompt_id, prompt_budget)
+                    logger.info(f"Set custom budget limits for prompt: {prompt_id}")
     else:
         logger.info("No prompts provided")
 

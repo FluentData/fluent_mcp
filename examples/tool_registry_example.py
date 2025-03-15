@@ -1,8 +1,13 @@
 """
-Example usage of the tool registry.
+Example usage of the tool registry for embedded tools.
 
 This script demonstrates how to register and use embedded tools
 with the Fluent MCP tool registry.
+
+IMPORTANT: Embedded tools are ONLY for use by the embedded LLM within the MCP server.
+They are hidden from consuming LLMs and only available to the embedded reasoning engine.
+Use these for internal processing, reasoning, and operations that should not be
+directly exposed to external AI systems.
 """
 
 import json
@@ -22,7 +27,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tool_registry_example")
 
 
-# Define some example tools
+# Define some example embedded tools
+# These tools are ONLY available to the embedded LLM, not to consuming LLMs
 @register_embedded_tool()
 def calculate_sum(numbers: List[float]) -> float:
     """Calculate the sum of a list of numbers."""
@@ -70,11 +76,12 @@ def generate_greeting(name: str, formal: bool = False) -> str:
 
 def main():
     """Main entry point."""
-    logger.info("Tool Registry Example")
+    logger.info("Tool Registry Example for Embedded Tools")
 
-    # List all registered tools
+    # List all registered embedded tools
     tools = list_embedded_tools()
-    logger.info(f"Registered tools: {', '.join(tools)}")
+    logger.info(f"Registered embedded tools: {', '.join(tools)}")
+    logger.info("These tools are ONLY available to the embedded LLM, not to consuming LLMs")
 
     # Use a tool directly
     sum_tool = get_embedded_tool("calculate_sum")
@@ -93,7 +100,8 @@ def main():
     logger.info(f"Tools in OpenAI format: {json.dumps(openai_tools, indent=2)}")
 
     # Create an MCP server with the registered tools
-    logger.info("Creating MCP server with registered tools")
+    logger.info("Creating MCP server with registered embedded tools")
+    logger.info("These tools will ONLY be available to the embedded LLM, not to consuming LLMs")
 
     # Get all the tool functions
     embedded_tools = [get_embedded_tool(name) for name in list_embedded_tools()]
@@ -101,7 +109,7 @@ def main():
     # Create the server
     server = create_mcp_server(
         server_name="tool_example_server",
-        embedded_tools=embedded_tools,
+        embedded_tools=embedded_tools,  # These tools will ONLY be available to the embedded LLM
         config={
             "debug": True,
             # Add LLM config if needed
@@ -114,6 +122,7 @@ def main():
 
     logger.info("Server created successfully")
     logger.info("In a real application, you would call server.run() here")
+    logger.info("When the server runs, embedded tools will ONLY be available to the embedded LLM")
 
 
 if __name__ == "__main__":

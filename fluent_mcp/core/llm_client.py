@@ -5,14 +5,234 @@ This module provides a client for interacting with language models
 from various providers.
 """
 
+import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
+import time
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
 # Global client instance
 _llm_client = None
+
+
+class RateLimiter:
+    """
+    Rate limiter for LLM API calls.
+
+    Tracks request history and enforces rate limits with exponential backoff retry logic.
+    """
+
+    def __init__(self, provider: str, config: Dict[str, Any]):
+        """
+        Initialize the rate limiter.
+
+        Args:
+            provider: The LLM provider name
+            config: Rate limiting configuration
+        """
+        self.provider = provider.lower()
+        self.logger = logging.getLogger(f"fluent_mcp.rate_limiter.{self.provider}")
+
+        # Default rate limits for different providers
+        self.default_limits = {
+            "ollama": {"requests_per_minute": 60, "requests_per_hour": 1000},
+            "groq": {"requests_per_minute": 5, "requests_per_hour": 100},
+            # Add other providers as needed
+        }
+
+        # Get provider-specific defaults or use conservative defaults
+        provider_defaults = self.default_limits.get(provider, {"requests_per_minute": 10, "requests_per_hour": 100})
+
+        # Set rate limits from config or use defaults
+        rate_limit_config = config.get("rate_limits", {})
+        self.requests_per_minute = rate_limit_config.get(
+            "requests_per_minute", provider_defaults["requests_per_minute"]
+        )
+        self.requests_per_hour = rate_limit_config.get("requests_per_hour", provider_defaults["requests_per_hour"])
+
+        # Retry configuration
+        retry_config = config.get("retry_config", {})
+        self.max_retries = retry_config.get("max_retries", 5)
+        self.base_delay = retry_config.get("base_delay", 1.0)  # Base delay in seconds
+        self.max_delay = retry_config.get("max_delay", 60.0)  # Maximum delay in seconds
+
+        # Request history tracking
+        self.request_history: List[datetime] = []
+
+        self.logger.info(
+            f"Rate limiter configured for {provider}: "
+            f"{self.requests_per_minute} requests/minute, "
+            f"{self.requests_per_hour} requests/hour, "
+            f"max {self.max_retries} retries"
+        )
+
+    def _clean_history(self):
+        """
+        Clean up old requests from history.
+        """
+        now = datetime.now()
+        one_hour_ago = now - timedelta(hours=1)
+
+        # Keep only requests from the last hour
+        self.request_history = [dt for dt in self.request_history if dt > one_hour_ago]
+
+    async def check_rate_limit(self) -> Tuple[bool, Optional[float]]:
+        """
+        Check if we're within rate limits.
+
+        Returns:
+            A tuple of (is_allowed, retry_after)
+        """
+        self._clean_history()
+        now = datetime.now()
+
+        # Check hour limit
+        requests_last_hour = len(self.request_history)
+        if requests_last_hour >= self.requests_per_hour:
+            oldest = min(self.request_history)
+            retry_after = (oldest + timedelta(hours=1) - now).total_seconds()
+            self.logger.warning(
+                f"Hour rate limit reached: {requests_last_hour}/{self.requests_per_hour} requests. "
+                f"Try again in {retry_after:.1f} seconds."
+            )
+            return False, max(0, retry_after)
+
+        # Check minute limit
+        one_minute_ago = now - timedelta(minutes=1)
+        requests_last_minute = sum(1 for dt in self.request_history if dt > one_minute_ago)
+
+        if requests_last_minute >= self.requests_per_minute:
+            # Find the oldest request within the last minute
+            minute_requests = [dt for dt in self.request_history if dt > one_minute_ago]
+            oldest_minute = min(minute_requests)
+            retry_after = (oldest_minute + timedelta(minutes=1) - now).total_seconds()
+            self.logger.warning(
+                f"Minute rate limit reached: {requests_last_minute}/{self.requests_per_minute} requests. "
+                f"Try again in {retry_after:.1f} seconds."
+            )
+            return False, max(0, retry_after)
+
+        return True, None
+
+    def record_request(self):
+        """
+        Record a new request in the history.
+        """
+        self.request_history.append(datetime.now())
+
+    def detect_rate_limit_error(self, exception: Exception) -> Optional[float]:
+        """
+        Detect if an exception is due to rate limiting and extract retry information.
+
+        Args:
+            exception: The exception to check
+
+        Returns:
+            Retry after seconds if it's a rate limit error, None otherwise
+        """
+        error_text = str(exception).lower()
+
+        # Provider-specific rate limit detection
+        if self.provider == "groq":
+            # Groq rate limit detection logic
+            if "rate limit" in error_text or "too many requests" in error_text or "429" in error_text:
+                # Try to extract retry-after header if available in the exception
+                retry_after = None
+
+                # Check if it's an OpenAI error with headers
+                if hasattr(exception, "headers") and getattr(exception, "headers") is not None:
+                    retry_after_str = exception.headers.get("retry-after")
+                    if retry_after_str:
+                        try:
+                            retry_after = float(retry_after_str)
+                        except (ValueError, TypeError):
+                            pass
+
+                # If we couldn't extract retry-after, use exponential backoff
+                if retry_after is None:
+                    retry_after = 60.0  # Default for Groq
+
+                return retry_after
+
+        elif self.provider == "ollama":
+            # Ollama rate limit detection logic
+            if "rate limit" in error_text or "too many requests" in error_text:
+                return 5.0  # Default for Ollama
+
+        # Generic rate limit detection as a fallback
+        if any(phrase in error_text for phrase in ["rate limit", "too many requests", "429", "throttl"]):
+            return 10.0  # Generic default
+
+        return None
+
+    async def with_rate_limiting(self, func, *args, **kwargs):
+        """
+        Execute a function with rate limiting and retry logic.
+
+        Args:
+            func: The function to execute
+            *args: Arguments for the function
+            **kwargs: Keyword arguments for the function
+
+        Returns:
+            The result of the function
+
+        Raises:
+            LLMClientRateLimitError: If rate limits are exceeded after all retries
+            Any other exceptions raised by the function
+        """
+        retries = 0
+
+        while True:
+            # Check if we're within rate limits
+            is_allowed, retry_after = await self.check_rate_limit()
+
+            if not is_allowed:
+                if retries >= self.max_retries:
+                    raise LLMClientRateLimitError(
+                        f"Rate limit exceeded after {retries} retries. Try again later.", retry_after=retry_after
+                    )
+
+                # Wait and retry
+                wait_time = retry_after if retry_after is not None else self.base_delay * (2**retries)
+                wait_time = min(wait_time, self.max_delay)
+
+                self.logger.info(
+                    f"Rate limit exceeded. Retrying in {wait_time:.1f} seconds (retry {retries+1}/{self.max_retries})"
+                )
+                await asyncio.sleep(wait_time)
+                retries += 1
+                continue
+
+            # Record this request
+            self.record_request()
+
+            try:
+                # Execute the function
+                return await func(*args, **kwargs)
+            except Exception as e:
+                # Check if this is a rate limit error
+                retry_after = self.detect_rate_limit_error(e)
+
+                if retry_after is not None:
+                    if retries >= self.max_retries:
+                        raise LLMClientRateLimitError(
+                            f"Rate limit error after {retries} retries: {str(e)}", retry_after=retry_after
+                        )
+
+                    # Wait and retry
+                    wait_time = retry_after
+                    self.logger.info(
+                        f"Rate limit error detected. Retrying in {wait_time:.1f} seconds (retry {retries+1}/{self.max_retries})"
+                    )
+                    await asyncio.sleep(wait_time)
+                    retries += 1
+                else:
+                    # Not a rate limit error, re-raise
+                    raise
 
 
 class LLMClientError(Exception):
@@ -31,6 +251,14 @@ class LLMClientNotConfiguredError(LLMClientError):
     """Exception raised when the client is not configured."""
 
     pass
+
+
+class LLMClientRateLimitError(LLMClientError):
+    """Exception raised when rate limits are hit."""
+
+    def __init__(self, message: str, retry_after: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class LLMClient:
@@ -81,6 +309,9 @@ class LLMClient:
             error_msg = f"Unsupported provider: {self.provider}. Supported providers are: ollama, groq"
             self.logger.error(error_msg)
             raise LLMClientConfigError(error_msg)
+
+        # Initialize rate limiter
+        self.rate_limiter = RateLimiter(self.provider, config)
 
         # Initialize the client based on the provider
         self._client = self._initialize_client()
@@ -177,22 +408,22 @@ class LLMClient:
 
         result = {"status": "complete", "content": "", "tool_calls": [], "error": None}
 
+        # Prepare the request parameters
+        params = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        # Add tools if provided
+        if tools:
+            params["tools"] = tools
+            self.logger.debug(f"Including {len(tools)} tools in the request")
+
         try:
-            # Prepare the request parameters
-            params = {
-                "model": self.model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            }
-
-            # Add tools if provided
-            if tools:
-                params["tools"] = tools
-                self.logger.debug(f"Including {len(tools)} tools in the request")
-
-            # Make the API call
-            response = await self._call_chat_completion_api(params)
+            # Make the API call with rate limiting
+            response = await self.rate_limiter.with_rate_limiting(self._call_chat_completion_api, params)
 
             # Extract the content and tool calls
             if response and hasattr(response, "choices") and len(response.choices) > 0:
@@ -237,6 +468,12 @@ class LLMClient:
                 result["status"] = "error"
                 result["error"] = "Empty or invalid response from LLM"
 
+        except LLMClientRateLimitError as e:
+            self.logger.error(f"Rate limit error: {str(e)}")
+            result["status"] = "error"
+            result["error"] = f"Rate limit exceeded: {str(e)}"
+            if e.retry_after:
+                result["retry_after"] = e.retry_after
         except Exception as e:
             self.logger.error(f"Error in chat completion: {str(e)}")
             result["status"] = "error"
@@ -358,7 +595,11 @@ def get_llm_client() -> LLMClient:
 
 
 async def run_embedded_reasoning(
-    system_prompt: str, user_prompt: str, tools: Optional[List[Dict[str, Any]]] = None
+    system_prompt: str,
+    user_prompt: str,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    prompt: Optional[Dict[str, Any]] = None,
+    project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run embedded reasoning with the language model.
@@ -367,6 +608,8 @@ async def run_embedded_reasoning(
         system_prompt: The system prompt to provide context
         user_prompt: The user prompt to process
         tools: Optional list of tools to make available to the model
+        prompt: Optional prompt dictionary from the prompt loader
+        project_id: Optional project ID for budget tracking (defaults to server name)
 
     Returns:
         A dictionary containing the response and any tool calls
@@ -385,8 +628,35 @@ async def run_embedded_reasoning(
         # Get the LLM client
         client = get_llm_client()
 
-        # If tools is None, get all registered embedded tools
-        if tools is None:
+        # Get the current server for budget tracking
+        from fluent_mcp.core.server import get_current_server
+
+        server = get_current_server()
+
+        # Use server name as project_id if not provided
+        if project_id is None and server:
+            project_id = server.name
+        elif project_id is None:
+            project_id = "default"
+
+        # Get prompt ID for budget tracking
+        prompt_id = None
+        if prompt and "config" in prompt and "name" in prompt["config"]:
+            prompt_id = prompt["config"]["name"]
+
+        # If prompt is provided, extract tools from it
+        if prompt is not None:
+            from fluent_mcp.core.prompt_loader import get_prompt_tools
+
+            prompt_tools = get_prompt_tools(prompt)
+            if prompt_tools:
+                logger.info(f"Using {len(prompt_tools)} tools defined in prompt: {prompt['config'].get('name')}")
+                tools = prompt_tools
+            else:
+                logger.info(f"No tools defined in prompt: {prompt['config'].get('name')}")
+                tools = []
+        # If tools is None and no prompt is provided, get all registered embedded tools
+        elif tools is None:
             from fluent_mcp.core.tool_registry import get_tools_as_openai_format
 
             tools = get_tools_as_openai_format()
@@ -404,6 +674,31 @@ async def run_embedded_reasoning(
         logger.info("Embedded reasoning completed successfully")
         if result["tool_calls"]:
             logger.info(f"Model made {len(result['tool_calls'])} tool calls")
+
+            # Execute tool calls with budget enforcement if budget manager is available
+            if server and server.budget_manager and project_id:
+                from fluent_mcp.core.tool_execution import execute_embedded_tool
+
+                # Add tool results to the response
+                result["tool_results"] = []
+
+                for tool_call in result["tool_calls"]:
+                    if tool_call["type"] == "function":
+                        function_name = tool_call["function"]["name"]
+                        arguments = tool_call["function"]["arguments"]
+
+                        # Execute the tool with budget enforcement
+                        tool_result = await execute_embedded_tool(function_name, arguments, project_id, prompt_id)
+
+                        # Add the result to the response
+                        result["tool_results"].append(
+                            {
+                                "tool_call_id": tool_call["id"],
+                                "function_name": function_name,
+                                "arguments": arguments,
+                                "result": tool_result,
+                            }
+                        )
 
     except LLMClientNotConfiguredError as e:
         logger.error(f"LLM client not configured: {str(e)}")

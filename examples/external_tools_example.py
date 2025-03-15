@@ -2,7 +2,12 @@
 Example usage of external tools in Fluent MCP.
 
 This script demonstrates how to register and use external tools
-that can be exposed to AI coders through Claude or other MCP frontends.
+that are exposed to consuming LLMs through the MCP protocol.
+
+IMPORTANT: External tools are the ONLY tools exposed to consuming LLMs through the MCP protocol.
+These tools are made available to external AI systems that interact with your MCP server.
+Use these for operations that you want to expose to consuming LLMs, such as data retrieval,
+code generation, or other capabilities you want to provide to external AI systems.
 """
 
 import json
@@ -23,6 +28,7 @@ logger = logging.getLogger("external_tools_example")
 
 
 # Define some example external tools
+# These tools are exposed to consuming LLMs through the MCP protocol
 @register_external_tool()
 def search_documentation(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     """
@@ -157,6 +163,7 @@ def main():
 
     # Create an MCP server with the registered external tools
     logger.info("Creating MCP server with registered external tools")
+    logger.info("These tools will be exposed to consuming LLMs through the MCP protocol")
 
     # Get all the external tool functions
     external_tools = [get_external_tool(name) for name in list_external_tools()]
@@ -164,7 +171,7 @@ def main():
     # Create the server
     server = create_mcp_server(
         server_name="external_tools_example_server",
-        external_tools=external_tools,
+        external_tools=external_tools,  # These tools will be exposed to consuming LLMs
         config={
             "debug": True,
             # Add LLM config if needed
@@ -177,6 +184,7 @@ def main():
 
     logger.info("Server created successfully")
     logger.info("In a real application, you would call server.run() here")
+    logger.info("When the server runs, external tools will be available to consuming LLMs")
 
 
 if __name__ == "__main__":

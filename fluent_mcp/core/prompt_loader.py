@@ -37,6 +37,18 @@ class MissingRequiredFieldError(PromptLoaderError):
     pass
 
 
+class InvalidToolsFormatError(PromptLoaderError):
+    """Exception raised when the tools list format is invalid."""
+
+    pass
+
+
+class InvalidBudgetFormatError(PromptLoaderError):
+    """Exception raised when the budget configuration format is invalid."""
+
+    pass
+
+
 class PromptLoader:
     """
     Loader for LLM prompts.
@@ -139,6 +151,8 @@ def parse_markdown_with_frontmatter(file_path: str) -> Dict[str, Any]:
     Raises:
         InvalidFrontmatterError: If the frontmatter is invalid
         MissingRequiredFieldError: If a required field is missing
+        InvalidToolsFormatError: If the tools list format is invalid
+        InvalidBudgetFormatError: If the budget configuration format is invalid
     """
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -167,6 +181,41 @@ def parse_markdown_with_frontmatter(file_path: str) -> Dict[str, Any]:
             raise MissingRequiredFieldError(
                 f"Missing required fields in frontmatter of {file_path}: {', '.join(missing_fields)}"
             )
+
+        # Validate tools list if present
+        if "tools" in config:
+            tools = config["tools"]
+            if not isinstance(tools, list):
+                raise InvalidToolsFormatError(f"Tools in frontmatter of {file_path} must be a list")
+
+            for tool in tools:
+                if not isinstance(tool, str):
+                    raise InvalidToolsFormatError(f"Each tool in frontmatter of {file_path} must be a string")
+
+        # Validate budget configuration if present
+        if "budget" in config:
+            budget = config["budget"]
+            if not isinstance(budget, dict):
+                raise InvalidBudgetFormatError(f"Budget in frontmatter of {file_path} must be a dictionary")
+
+            for tool_name, tool_budget in budget.items():
+                if not isinstance(tool_budget, dict):
+                    raise InvalidBudgetFormatError(
+                        f"Budget for tool '{tool_name}' in frontmatter of {file_path} must be a dictionary"
+                    )
+
+                # Check for valid budget fields
+                for field, value in tool_budget.items():
+                    if field not in ["hourly_limit", "daily_limit"]:
+                        logger.warning(
+                            f"Unknown budget field '{field}' for tool '{tool_name}' in frontmatter of {file_path}"
+                        )
+
+                    if not isinstance(value, int) or value <= 0:
+                        raise InvalidBudgetFormatError(
+                            f"Budget limit '{field}' for tool '{tool_name}' in frontmatter of {file_path} "
+                            f"must be a positive integer"
+                        )
 
         # Create the prompt dictionary
         relative_path = os.path.relpath(file_path)
@@ -206,6 +255,13 @@ def load_prompts(directory: str) -> List[Dict[str, Any]]:
                         prompt = parse_markdown_with_frontmatter(file_path)
                         prompts.append(prompt)
                         logger.info(f"Loaded prompt: {prompt['config'].get('name')} from {prompt['path']}")
+
+                        # Log if tools are defined in the prompt
+                        if "tools" in prompt["config"]:
+                            tool_names = prompt["config"]["tools"]
+                            logger.info(
+                                f"Prompt '{prompt['config'].get('name')}' has {len(tool_names)} tools defined: {', '.join(tool_names)}"
+                            )
                     except PromptLoaderError as e:
                         logger.warning(f"Skipping prompt file {file_path}: {str(e)}")
                     except Exception as e:
@@ -216,3 +272,82 @@ def load_prompts(directory: str) -> List[Dict[str, Any]]:
 
     logger.info(f"Loaded {len(prompts)} prompts from {directory}")
     return prompts
+
+
+def get_prompt_tools(prompt: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Get the embedded tool definitions for a prompt.
+
+    This function looks up each tool name specified in the prompt's frontmatter
+    in the embedded tools registry and returns the corresponding tool definitions
+    in OpenAI function calling format.
+
+    Args:
+        prompt: A prompt dictionary from the prompt loader
+
+    Returns:
+        A list of tool definitions in OpenAI function calling format,
+        or an empty list if no tools are specified in the frontmatter
+    """
+    from fluent_mcp.core.tool_registry import get_embedded_tool, get_tools_as_openai_format
+
+    logger.debug(f"Getting tools for prompt: {prompt['config'].get('name')}")
+
+    # If no tools are specified in the frontmatter, return an empty list
+    if "tools" not in prompt["config"]:
+        logger.debug(f"No tools specified in prompt: {prompt['config'].get('name')}")
+        return []
+
+    tool_names = prompt["config"]["tools"]
+    if not tool_names:
+        logger.debug(f"Empty tools list in prompt: {prompt['config'].get('name')}")
+        return []
+
+    logger.info(f"Looking up {len(tool_names)} tools for prompt: {prompt['config'].get('name')}")
+
+    # Get all available tools in OpenAI format
+    all_tools = get_tools_as_openai_format()
+    all_tools_dict = {tool["function"]["name"]: tool for tool in all_tools}
+
+    # Look up each tool by name
+    prompt_tools = []
+    for tool_name in tool_names:
+        if tool_name in all_tools_dict:
+            prompt_tools.append(all_tools_dict[tool_name])
+            logger.debug(f"Found tool: {tool_name}")
+        else:
+            logger.warning(f"Tool not found in registry: {tool_name}")
+
+    logger.info(f"Found {len(prompt_tools)} tools for prompt: {prompt['config'].get('name')}")
+    return prompt_tools
+
+
+def get_prompt_budget(prompt: Dict[str, Any]) -> Dict[str, Dict[str, int]]:
+    """
+    Get the budget configuration for a prompt.
+
+    This function extracts the budget configuration from the prompt's frontmatter.
+
+    Args:
+        prompt: A prompt dictionary from the prompt loader
+
+    Returns:
+        A dictionary containing the budget configuration,
+        or an empty dictionary if no budget is specified in the frontmatter
+    """
+    logger.debug(f"Getting budget configuration for prompt: {prompt['config'].get('name')}")
+
+    # If no budget is specified in the frontmatter, return an empty dictionary
+    if "budget" not in prompt["config"]:
+        logger.debug(f"No budget specified in prompt: {prompt['config'].get('name')}")
+        return {}
+
+    budget = prompt["config"]["budget"]
+    if not budget:
+        logger.debug(f"Empty budget configuration in prompt: {prompt['config'].get('name')}")
+        return {}
+
+    logger.info(f"Found budget configuration for {len(budget)} tools in prompt: {prompt['config'].get('name')}")
+
+    # Return the budget configuration
+    return budget

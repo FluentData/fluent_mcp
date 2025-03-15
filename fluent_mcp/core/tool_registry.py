@@ -2,7 +2,20 @@
 Tool registry for Fluent MCP.
 
 This module provides functionality for registering and retrieving
-embedded tools that can be used by the MCP server.
+tools that can be used by the MCP server.
+
+There are two distinct types of tools in Fluent MCP:
+
+1. Embedded Tools: These tools are ONLY for use by the embedded LLM within the MCP server.
+   They are not exposed to consuming LLMs and are used for internal reasoning and processing.
+   Register these with the @register_embedded_tool decorator.
+
+2. External Tools: These tools are exposed through the MCP server to consuming LLMs.
+   They are the only tools that external AI systems can access via the MCP protocol.
+   Register these with the @register_external_tool decorator.
+
+This architectural pattern ensures a clear separation between internal tools used by
+the embedded reasoning engine and external tools exposed to consuming LLMs.
 """
 
 import functools
@@ -22,6 +35,11 @@ logger = logging.getLogger("fluent_mcp.tool_registry")
 def register_embedded_tool(name: Optional[str] = None):
     """
     Decorator to register a function as an embedded tool.
+
+    IMPORTANT: Embedded tools are ONLY for use by the embedded LLM within the MCP server.
+    They are hidden from consuming LLMs and only available to the embedded reasoning engine.
+    Use these for internal processing, reasoning, and operations that should not be
+    directly exposed to external AI systems.
 
     Args:
         name: Optional name for the tool. If not provided, the function name will be used.
@@ -51,7 +69,10 @@ def register_external_tool(name: Optional[str] = None):
     """
     Decorator to register a function as an external tool.
 
-    External tools are exposed to AI coders through Claude or other MCP frontends.
+    IMPORTANT: External tools are the ONLY tools exposed to consuming LLMs through the MCP protocol.
+    These tools are made available to external AI systems that interact with your MCP server.
+    Use these for operations that you want to expose to consuming LLMs, such as data retrieval,
+    code generation, or other capabilities you want to provide to external AI systems.
 
     Args:
         name: Optional name for the tool. If not provided, the function name will be used.
@@ -191,6 +212,10 @@ def get_tools_as_openai_format() -> List[Dict[str, Any]]:
     """
     Get all registered embedded tools in OpenAI function calling format.
 
+    These tools are for use by the embedded LLM within the MCP server and are not
+    exposed to consuming LLMs. This function is typically used when setting up
+    the embedded reasoning engine to give it access to internal tools.
+
     Returns:
         A list of tools formatted for OpenAI's function calling API.
     """
@@ -200,6 +225,10 @@ def get_tools_as_openai_format() -> List[Dict[str, Any]]:
 def get_external_tools_as_openai_format() -> List[Dict[str, Any]]:
     """
     Get all registered external tools in OpenAI function calling format.
+
+    These tools are exposed to consuming LLMs through the MCP protocol. This function
+    is typically used when setting up the MCP server to expose tools to external
+    AI systems.
 
     Returns:
         A list of external tools formatted for OpenAI's function calling API.
@@ -267,6 +296,10 @@ def register_tool(tool: Callable) -> None:
 def register_external_tools(tools: List[Callable]) -> None:
     """
     Register a list of external tools with the tool registry.
+
+    IMPORTANT: External tools are the ONLY tools exposed to consuming LLMs through the MCP protocol.
+    This function allows you to register multiple external tools at once, which is useful when
+    setting up an MCP server with a predefined set of tools.
 
     Args:
         tools: List of tool functions to register as external tools
