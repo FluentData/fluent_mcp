@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -600,6 +601,8 @@ async def run_embedded_reasoning(
     tools: Optional[List[Dict[str, Any]]] = None,
     prompt: Optional[Dict[str, Any]] = None,
     project_id: Optional[str] = None,
+    enable_reflection: bool = False,
+    max_reflection_iterations: int = 3,
 ) -> Dict[str, Any]:
     """
     Run embedded reasoning with the language model.
@@ -610,6 +613,8 @@ async def run_embedded_reasoning(
         tools: Optional list of tools to make available to the model
         prompt: Optional prompt dictionary from the prompt loader
         project_id: Optional project ID for budget tracking (defaults to server name)
+        enable_reflection: Whether to enable the reflection loop
+        max_reflection_iterations: Maximum number of reflection iterations
 
     Returns:
         A dictionary containing the response and any tool calls
@@ -627,52 +632,95 @@ async def run_embedded_reasoning(
     try:
         # Get the LLM client
         client = get_llm_client()
+        if not client:
+            raise LLMClientNotConfiguredError("LLM client not configured")
 
-        # Get the current server for budget tracking
-        from fluent_mcp.core.server import get_current_server
+        # Get the server instance if available
+        from fluent_mcp.core.server import get_server
 
-        server = get_current_server()
+        server = get_server()
 
-        # Use server name as project_id if not provided
-        if project_id is None and server:
-            project_id = server.name
-        elif project_id is None:
-            project_id = "default"
+        # Generate a prompt ID for tracking
+        prompt_id = str(uuid.uuid4())
 
-        # Get prompt ID for budget tracking
-        prompt_id = None
-        if prompt and "config" in prompt and "name" in prompt["config"]:
-            prompt_id = prompt["config"]["name"]
-
-        # If prompt is provided, extract tools from it
-        if prompt is not None:
+        # Get tools from the prompt if available
+        if prompt and not tools:
             from fluent_mcp.core.prompt_loader import get_prompt_tools
 
-            prompt_tools = get_prompt_tools(prompt)
-            if prompt_tools:
-                logger.info(f"Using {len(prompt_tools)} tools defined in prompt: {prompt['config'].get('name')}")
-                tools = prompt_tools
-            else:
-                logger.info(f"No tools defined in prompt: {prompt['config'].get('name')}")
-                tools = []
-        # If tools is None and no prompt is provided, get all registered embedded tools
-        elif tools is None:
-            from fluent_mcp.core.tool_registry import get_tools_as_openai_format
+            tools = get_prompt_tools(prompt)
 
-            tools = get_tools_as_openai_format()
-            logger.info(f"Using {len(tools)} registered embedded tools")
+        # Run the LLM with the prompt and tools
+        logger.info("Calling LLM with embedded reasoning prompt")
+        response = await client.generate(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+        )
 
-        # Prepare the messages
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+        # Process the response
+        result = {
+            "status": "complete",
+            "content": response.get("content", ""),
+            "tool_calls": response.get("tool_calls", []),
+        }
 
-        # Call chat completion
-        result = await client.chat_completion(messages=messages, tools=tools, temperature=0.3, max_tokens=1000)
+        # If reflection is enabled and there are tool calls, run the reflection loop
+        if enable_reflection and result["tool_calls"]:
+            logger.info("Enabling reflection loop for embedded reasoning")
 
-        logger.info("Embedded reasoning completed successfully")
-        if result["tool_calls"]:
+            # Import the reflection loop
+            from fluent_mcp.core.reflection import ReflectionLoop
+
+            # Create a reflection loop instance
+            reflection_loop = ReflectionLoop()
+
+            # Execute tool calls to get results for reflection
+            tool_results = []
+
+            if server and server.budget_manager and project_id:
+                from fluent_mcp.core.tool_execution import execute_embedded_tool
+
+                for tool_call in result["tool_calls"]:
+                    if tool_call["type"] == "function":
+                        function_name = tool_call["function"]["name"]
+                        arguments = tool_call["function"]["arguments"]
+
+                        # Execute the tool with budget enforcement
+                        tool_result = await execute_embedded_tool(function_name, arguments, project_id, prompt_id)
+
+                        # Add the result to the list
+                        tool_results.append(
+                            {
+                                "tool_call_id": tool_call["id"],
+                                "function_name": function_name,
+                                "arguments": arguments,
+                                "result": tool_result,
+                            }
+                        )
+
+            # Run the reflection loop
+            reflection_result = await reflection_loop.run_reflection(
+                previous_reasoning=result["content"],
+                tool_calls=result["tool_calls"],
+                tool_results=tool_results,
+                llm_client=client,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_iterations=max_reflection_iterations,
+            )
+
+            # Update the result with the reflection result
+            result["content"] = reflection_result["content"]
+            result["tool_calls"] = reflection_result["tool_calls"]
+            result["reflection_history"] = reflection_result["reflection_history"]
+            result["reflection_iterations"] = reflection_result["iterations"]
+
+            # Add tool results if available
+            if "tool_results" in reflection_result:
+                result["tool_results"] = reflection_result["tool_results"]
+
+        # If no reflection or reflection is disabled, process tool calls normally
+        elif result["tool_calls"]:
             logger.info(f"Model made {len(result['tool_calls'])} tool calls")
 
             # Execute tool calls with budget enforcement if budget manager is available
