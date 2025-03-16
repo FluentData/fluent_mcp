@@ -7,11 +7,120 @@ improve its performance.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fluent_mcp.core.reflection_loader import ReflectionLoader
 
 logger = logging.getLogger("fluent_mcp.reflection")
+
+
+class ReflectionState:
+    """
+    Tracks the state of a reflection process.
+
+    This class maintains the state of a structured reflection process, including
+    the original task, budget, analysis, next steps, workflow state, and completion status.
+    It also provides methods for updating the state and managing the budget.
+    """
+
+    def __init__(self, original_task: str, initial_budget: int = 10):
+        """
+        Initialize a new reflection state.
+
+        Args:
+            original_task: The original task or question to reflect on
+            initial_budget: The initial budget for the reflection process
+        """
+        self.original_task: str = original_task
+        self.initial_budget: int = initial_budget
+        self.remaining_budget: int = initial_budget
+        self.analysis: str = ""
+        self.next_steps: str = ""
+        self.workflow_state: str = ""
+        self.is_complete: bool = False
+        self.history: List[Dict[str, Any]] = []
+
+    def decrease_budget(self, amount: int = 1) -> bool:
+        """
+        Decrease the remaining budget by the specified amount.
+
+        Args:
+            amount: The amount to decrease the budget by
+
+        Returns:
+            True if the budget was successfully decreased, False if the budget is exhausted
+        """
+        if self.remaining_budget < amount:
+            logger.warning(f"Budget exhausted: {self.remaining_budget} < {amount}")
+            return False
+
+        self.remaining_budget -= amount
+        logger.debug(f"Budget decreased by {amount}, remaining: {self.remaining_budget}")
+        return True
+
+    def update_from_gather_thoughts(self, result: Dict[str, Any]) -> None:
+        """
+        Update the state from the result of a gather_thoughts operation.
+
+        Args:
+            result: The result dictionary from gather_thoughts
+        """
+        # Update state from result
+        if "analysis" in result:
+            self.analysis = result["analysis"] if result["analysis"] is not None else ""
+
+        if "next_steps" in result:
+            self.next_steps = result["next_steps"] if result["next_steps"] is not None else ""
+
+        if "workflow_state" in result:
+            self.workflow_state = result["workflow_state"] if result["workflow_state"] is not None else ""
+
+        # Check if the task is complete
+        if "status" in result and result["status"] == "complete":
+            self.is_complete = True
+            logger.info("Reflection process marked as complete")
+
+        # Save current state to history after updating
+        self._save_to_history()
+
+        logger.debug(
+            f"State updated from gather_thoughts: analysis={len(self.analysis)} chars, "
+            f"next_steps={len(self.next_steps)} chars, "
+            f"workflow_state={len(self.workflow_state)} chars, "
+            f"is_complete={self.is_complete}"
+        )
+
+    def _save_to_history(self) -> None:
+        """
+        Save the current state to the state history.
+        """
+        current_state = {
+            "analysis": self.analysis,
+            "next_steps": self.next_steps,
+            "workflow_state": self.workflow_state,
+            "remaining_budget": self.remaining_budget,
+            "is_complete": self.is_complete,
+        }
+        self.history.append(current_state)
+        logger.debug(f"Saved state to history, history size: {len(self.history)}")
+
+    def get_template_variables(self) -> Dict[str, Any]:
+        """
+        Get a dictionary of variables for template formatting.
+
+        Returns:
+            A dictionary of variables for template formatting
+        """
+        return {
+            "original_task": self.original_task,
+            "analysis": self.analysis or "No analysis yet.",
+            "next_steps": self.next_steps or "No next steps defined yet.",
+            "workflow_state": self.workflow_state or "No workflow state yet.",
+            "remaining_budget": self.remaining_budget,
+            "initial_budget": self.initial_budget,
+            "is_complete": self.is_complete,
+            "history_length": len(self.history),
+        }
 
 
 class ReflectionLoop:
@@ -169,6 +278,20 @@ class ReflectionLoop:
         Returns:
             The formatted template content
         """
+        return self.reflection_loader.format_reflection_template(template, variables)
+
+    def _format_template_with_state(self, template: Dict[str, Any], state: ReflectionState) -> str:
+        """
+        Format a reflection template with state variables.
+
+        Args:
+            template: The reflection template dictionary
+            state: The reflection state to use for variables
+
+        Returns:
+            The formatted template content
+        """
+        variables = state.get_template_variables()
         return self.reflection_loader.format_reflection_template(template, variables)
 
     def _format_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> str:
