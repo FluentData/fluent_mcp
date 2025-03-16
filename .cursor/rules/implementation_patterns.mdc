@@ -1,0 +1,125 @@
+---
+description: Implementation patterns and best practices for the structured reflection loop
+globs: ["fluent_mcp/core/reflection.py", "fluent_mcp/core/tool_registry.py", "fluent_mcp/core/reflection_loader.py"]
+alwaysApply: false
+---
+
+# Implementation Patterns for Structured Reflection Loop
+
+## Architectural Principles
+
+1. **Separation of Concerns**:
+   - State tracking (ReflectionState)
+   - Template management (ReflectionLoader)
+   - Loop execution flow (ReflectionLoop)
+   - Tool definitions (standard tools)
+
+2. **Asynchronous Design**:
+   - All external interactions should be async
+   - Template loading can be synchronous
+   - Tool execution should be async
+
+3. **Error Handling Patterns**:
+   - Graceful degradation on budget exhaustion
+   - Clear error messages
+   - Partial results when appropriate
+
+## Implementation Patterns
+
+### State Management
+
+```python
+# ReflectionState should track state across iterations
+class ReflectionState:
+    def __init__(self, original_task, initial_budget=10):
+        self.original_task = original_task
+        self.initial_budget = initial_budget
+        self.remaining_budget = initial_budget
+        self.analysis = ""
+        self.next_steps = ""
+        self.workflow_state = ""
+        self.is_complete = False
+        # Additional properties as needed
+```
+
+### Template Loading
+
+```python
+# ReflectionLoader should handle template management
+class ReflectionLoader:
+    def get_reflection_template(self, tool_name=None):
+        # Load and combine templates based on hierarchy
+        pass
+        
+    def get_tool_use_template(self):
+        # Load the tool use template
+        pass
+        
+    def format_reflection_template(self, template, variables):
+        # Format a template with variables
+        pass
+```
+
+### Loop Execution
+
+```python
+# ReflectionLoop should handle the execution flow
+class ReflectionLoop:
+    def __init__(self, reflection_loader=None):
+        self.reflection_loader = reflection_loader or ReflectionLoader()
+        
+    async def run_structured_reflection_loop(
+        self,
+        original_task,
+        tool_name,
+        llm_client,
+        initial_budget=10,
+        max_iterations=5
+    ):
+        # Main reflection loop logic
+        pass
+```
+
+### Standard Tools
+
+```python
+# Standard tools should follow this pattern
+@register_embedded_tool()
+def gather_thoughts(analysis, next_steps, workflow_state, is_complete=False):
+    """
+    Organize thinking and maintain workflow state across iterations.
+    """
+    return {
+        "status": "complete" if is_complete else "in_progress",
+        "analysis": analysis,
+        "next_steps": next_steps,
+        "workflow_state": workflow_state
+    }
+
+@register_embedded_tool()
+def job_complete(result):
+    """
+    Signal that the job is complete and return the final result.
+    """
+    return {
+        "status": "complete",
+        "result": result
+    }
+```
+
+## Testing Strategies
+
+1. **Unit Testing**:
+   - Test individual components in isolation
+   - Mock dependencies for clarity
+   - Cover edge cases thoroughly
+
+2. **Integration Testing**:
+   - Test complete flow with mock LLM
+   - Use realistic tool calls and responses
+   - Test budget exhaustion and early completion
+
+3. **Component Testing**:
+   - Test template formatting
+   - Test state updates
+   - Test tool detection and execution

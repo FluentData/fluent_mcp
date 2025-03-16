@@ -1,46 +1,59 @@
 ---
 name: tool_use
-description: Standard template for tool usage instructions
+description: Standard template for tool usage instructions in the structured reflection loop
 application_mode: base
 ---
 
-# Tool Usage Guidelines
+# Task Execution Guide
+
+## Original Task
+{{original_task}}
+
+## Current Understanding
+{{analysis}}
+
+## Planned Actions
+{{next_steps}}
+
+## Accumulated Information
+{{workflow_state}}
 
 ## Available Tools
-You have access to the following tools:
-
 {{tool_descriptions}}
 
-## Best Practices for Tool Usage
+## Budget Information
+You have {{remaining_budget}} iterations remaining out of {{initial_budget}}.
+Consider this when selecting tools and planning actions.
 
-1. **Understand the tool's purpose**: Before using a tool, make sure you understand what it does and when it should be used.
+## Instructions
 
-2. **Provide complete arguments**: Ensure all required arguments are provided and correctly formatted.
+### Tool Selection
+Based on your next steps plan and the available information:
+1. Review the available tools and their capabilities
+2. Select the most appropriate tool for your current objective
+3. Ensure you have all required information for the tool
 
-3. **Process tool results carefully**: Analyze the results returned by tools before proceeding.
+### Task Completion Check
+Before proceeding, ask yourself:
+1. Do I have enough information to complete the task?
+2. Have I achieved the original objective?
+3. Is the result well-structured and complete?
 
-4. **Handle errors gracefully**: If a tool returns an error, try to understand why and adjust your approach.
+If you have gathered sufficient information and the task is complete:
+- Use the job_complete tool to finish the task
+- Format the result according to the appropriate template
+- Include all relevant findings and references
 
-5. **Use tools efficiently**: Avoid unnecessary tool calls and try to accomplish tasks with minimal steps.
+If more information is needed:
+- Select and use the appropriate tool
+- Be specific about what information you need
+- Consider the remaining budget
 
-6. **Combine tools effectively**: Some complex tasks may require using multiple tools in sequence.
+### Tool Usage Guidelines
+When using a tool:
+1. Provide all required arguments
+2. Format arguments correctly
+3. Be specific in your requests
+4. Consider how the results will contribute to the task
 
-## Tool Selection Strategy
-
-When deciding which tool to use:
-
-1. Identify the specific subtask you need to accomplish
-2. Review the available tools and their descriptions
-3. Select the most appropriate tool for the subtask
-4. Prepare the necessary arguments based on the tool's requirements
-5. Execute the tool and carefully analyze the results
-
-## Error Handling
-
-If you encounter errors when using tools:
-
-1. Read the error message carefully to understand the issue
-2. Check if you provided all required arguments with the correct types
-3. Verify that your input values are within expected ranges or formats
-4. Try to correct the issue and retry the tool call
-5. If the error persists, consider using an alternative approach or tool 
+Remember: The goal is to complete the task efficiently while maintaining high quality results.

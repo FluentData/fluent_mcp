@@ -1,0 +1,83 @@
+---
+description: Rules for implementing standard tools for the structured reflection loop
+globs: ["fluent_mcp/core/tool_registry.py"]
+alwaysApply: false
+---
+
+# Standard Tools Implementation Rules
+
+## Overview
+These rules define the requirements for implementing the standard tools needed for the structured reflection loop.
+
+## gather_thoughts Tool
+
+1. Function Signature:
+   - Must be registered as an embedded tool
+   - Must have the following parameters:
+     - `analysis`: Analysis of current situation and results
+     - `next_steps`: Plan for what to do next
+     - `workflow_state`: Markdown-formatted accumulated information and state
+     - `is_complete`: Boolean flag for task completion
+   - Must return a dictionary with:
+     - `status`: "complete" or "in_progress"
+     - `analysis`: Analysis provided
+     - `next_steps`: Next steps provided
+     - `workflow_state`: Workflow state provided
+
+2. Documentation:
+   - Must include comprehensive docstring explaining:
+     - Purpose of the tool
+     - When to use it
+     - How to format workflow state
+     - Meaning of each parameter
+     - Format of the return value
+
+3. Registration:
+   - Must be registered using the `@register_embedded_tool()` decorator
+   - Must be available to the embedded LLM
+
+## job_complete Tool
+
+1. Generic Version:
+   - Must be registered as an embedded tool
+   - Must have a single `result` parameter
+   - Must return a dictionary with:
+     - `status`: "complete"
+     - `result`: The result provided
+
+2. Tool-Specific Versions:
+   - Must follow naming convention: `<tool_name>_job_complete`
+   - Must be registered as embedded tools
+   - Must have parameters specific to the tool's output needs
+   - Must return a dictionary with:
+     - `status`: "complete"
+     - `result`: Formatted output based on parameters
+
+3. Documentation:
+   - Must include comprehensive docstring explaining:
+     - Purpose of the tool
+     - When to use it
+     - Format of the result
+     - How it signals task completion
+
+4. Registration:
+   - All job_complete variants must be registered using the `@register_embedded_tool()` decorator
+   - Must be available to the embedded LLM
+
+## Tool Detection and Processing
+
+1. Tool Call Detection:
+   - Must implement functions to detect:
+     - `gather_thoughts` tool calls
+     - `job_complete` tool calls (both generic and tool-specific)
+   - Must extract parameters from tool calls correctly
+
+2. Result Processing:
+   - Must properly process and extract results from `gather_thoughts` calls
+   - Must properly process and extract results from `job_complete` calls
+   - Must handle missing or malformed arguments gracefully
+
+3. Tool Registry Integration:
+   - Must ensure tools are properly registered in the tool registry
+   - Must ensure tools are included in OpenAI function calling format
+   - Must provide proper descriptions for LLM usage

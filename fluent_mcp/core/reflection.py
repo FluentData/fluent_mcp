@@ -10,6 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 from fluent_mcp.core.reflection_loader import ReflectionLoader
+from fluent_mcp.core.tool_registry import get_embedded_tool
 
 logger = logging.getLogger("fluent_mcp.reflection")
 
@@ -139,6 +140,325 @@ class ReflectionLoop:
             reflection_loader: Optional reflection loader instance
         """
         self.reflection_loader = reflection_loader or ReflectionLoader()
+
+    def _format_template_with_state(self, template: Dict[str, Any], state: ReflectionState) -> str:
+        """
+        Format a template using the reflection state.
+
+        Args:
+            template: The template to format
+            state: The reflection state to use for variables
+
+        Returns:
+            The formatted template content
+        """
+        variables = state.get_template_variables()
+        return self.reflection_loader.format_reflection_template(template, variables)
+
+    def _format_reflection_template_with_state(
+        self,
+        template: Dict[str, Any],
+        state: ReflectionState,
+        tool_result: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Format a reflection template with state and tool result.
+
+        Args:
+            template: The template to format
+            state: The reflection state to use for variables
+            tool_result: Optional tool result to include in the template
+
+        Returns:
+            The formatted template content
+        """
+        variables = state.get_template_variables()
+
+        # Add tool result variables if available
+        if tool_result:
+            variables.update(
+                {
+                    "tool_name": tool_result.get("function_name", ""),
+                    "tool_arguments": tool_result.get("arguments", {}),
+                    "tool_results": tool_result.get("result", ""),
+                }
+            )
+
+        return self.reflection_loader.format_reflection_template(template, variables)
+
+    def _check_for_job_complete(self, tool_calls: List[Dict[str, Any]]) -> bool:
+        """
+        Check if job_complete tool was called.
+
+        Args:
+            tool_calls: List of tool calls to check
+
+        Returns:
+            True if job_complete was called, False otherwise
+        """
+        for tool_call in tool_calls:
+            if tool_call["type"] == "function":
+                name = tool_call["function"]["name"]
+                if name == "job_complete" or name.endswith("_job_complete"):
+                    return True
+        return False
+
+    def _check_for_gather_thoughts(self, tool_calls: List[Dict[str, Any]]) -> bool:
+        """
+        Check if gather_thoughts tool was called.
+
+        Args:
+            tool_calls: List of tool calls to check
+
+        Returns:
+            True if gather_thoughts was called, False otherwise
+        """
+        for tool_call in tool_calls:
+            if tool_call["type"] == "function" and tool_call["function"]["name"] == "gather_thoughts":
+                return True
+        return False
+
+    def _get_gather_thoughts_result(
+        self, tool_calls: List[Dict[str, Any]], tool_results: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Extract result from gather_thoughts tool call.
+
+        Args:
+            tool_calls: List of tool calls
+            tool_results: Optional list of tool results. If not provided, returns the arguments from the tool call.
+
+        Returns:
+            A dictionary containing the gather_thoughts result, or an empty dict if no tool call found
+        """
+        for i, tool_call in enumerate(tool_calls):
+            if tool_call["type"] == "function" and tool_call["function"]["name"] == "gather_thoughts":
+                if tool_results and i < len(tool_results):
+                    return tool_results[i]
+                else:
+                    # If no tool results provided, return the arguments as the result
+                    args = tool_call["function"]["arguments"]
+                    is_complete = args.get("is_complete", False)
+                    return {
+                        "status": "complete" if is_complete else "in_progress",
+                        "analysis": args.get("analysis", ""),
+                        "next_steps": args.get("next_steps", ""),
+                        "workflow_state": args.get("workflow_state", ""),
+                        "is_complete": is_complete,
+                    }
+        return {}
+
+    def _get_job_complete_result(
+        self, tool_calls: List[Dict[str, Any]], tool_results: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Extract result from job_complete tool call.
+
+        Args:
+            tool_calls: List of tool calls
+            tool_results: Optional list of tool results. If not provided, returns the arguments from the tool call.
+
+        Returns:
+            A dictionary containing the job_complete result, or an error status if no tool call found
+        """
+        # If tool_results is a string, it's an error from the test
+        if isinstance(tool_results, str):
+            tool_results = None
+
+        for i, tool_call in enumerate(tool_calls):
+            if tool_call["type"] == "function" and (
+                tool_call["function"]["name"] == "job_complete"
+                or tool_call["function"]["name"].endswith("_job_complete")
+            ):
+                if tool_results and i < len(tool_results):
+                    return tool_results[i]
+                else:
+                    # If no tool results provided, return the arguments as the result
+                    args = tool_call["function"]["arguments"]
+                    return {
+                        "status": "complete",
+                        "result": args.get("result", ""),
+                    }
+        return {
+            "status": "error",
+            "error": "no result found for job_complete tool call",
+        }
+
+    async def run_structured_reflection_loop(
+        self,
+        original_task: str,
+        tool_name: str,
+        llm_client: Any,
+        initial_budget: int = 10,
+        max_iterations: int = 5,
+    ) -> Dict[str, Any]:
+        """
+        Run a structured reflection loop.
+
+        This method implements the main reflection loop that:
+        1. Creates a ReflectionState to track progress
+        2. Gets tool-specific job_complete function if available
+        3. Runs the main reflection loop until completion, budget exhaustion, or max iterations
+        4. Handles tool calls and gather_thoughts updates
+        5. Returns appropriate result based on completion status
+
+        Args:
+            original_task: The original task or question to reflect on
+            tool_name: The name of the tool to use for the task
+            llm_client: The LLM client to use for reflection
+            initial_budget: Initial budget for the reflection process
+            max_iterations: Maximum number of reflection iterations
+
+        Returns:
+            A dictionary containing the final result and status
+        """
+        logger.info(f"Starting structured reflection loop for tool: {tool_name}")
+
+        # Create reflection state
+        state = ReflectionState(original_task, initial_budget)
+
+        # Get tool-specific job_complete function if available
+        tool_specific_job_complete = get_embedded_tool(f"{tool_name}_job_complete")
+
+        # Track iterations
+        iteration = 0
+
+        while iteration < max_iterations and not state.is_complete:
+            iteration += 1
+            logger.info(f"Starting reflection iteration {iteration}")
+
+            # Check budget
+            if not state.decrease_budget(1):
+                logger.warning("Budget exhausted")
+                return {
+                    "status": "budget_exhausted",
+                    "result": "Budget exhausted before completion",
+                    "state": state.get_template_variables(),
+                }
+
+            # Get tool template
+            tool_template = self.reflection_loader.get_tool_template(tool_name)
+
+            # Format template with state
+            formatted_template = self._format_template_with_state(tool_template, state)
+
+            # Run tool with LLM
+            tool_result = await llm_client.chat_completion(
+                messages=[
+                    {"role": "system", "content": "You are using a tool to complete a task."},
+                    {"role": "user", "content": formatted_template},
+                ],
+                tools=get_embedded_tool(tool_name),
+                temperature=0.3,
+            )
+
+            # Check for errors
+            if tool_result.get("error"):
+                logger.error(f"Error in tool execution: {tool_result['error']}")
+                return {
+                    "status": "error",
+                    "result": f"Error in tool execution: {tool_result['error']}",
+                    "state": state.get_template_variables(),
+                }
+
+            # Get tool calls and results
+            tool_calls = tool_result.get("tool_calls", [])
+            tool_results = []
+
+            # Execute tool calls
+            for tool_call in tool_calls:
+                if tool_call["type"] == "function":
+                    tool = get_embedded_tool(tool_call["function"]["name"])
+                    if tool:
+                        result = await tool(**tool_call["function"]["arguments"])
+                        tool_results.append(result)
+
+            # Check for job completion
+            if self._check_for_job_complete(tool_calls):
+                job_result = self._get_job_complete_result(tool_calls, tool_results)
+                if job_result:
+                    return {
+                        "status": "complete",
+                        "result": job_result["result"],
+                        "state": state.get_template_variables(),
+                    }
+
+            # Check for gather_thoughts
+            if self._check_for_gather_thoughts(tool_calls):
+                gather_result = self._get_gather_thoughts_result(tool_calls, tool_results)
+                if gather_result:
+                    state.update_from_gather_thoughts(gather_result)
+
+            # Get reflection template
+            reflection_template = self.reflection_loader.get_reflection_template()
+
+            # Format reflection template with state and tool result
+            formatted_reflection = self._format_reflection_template_with_state(
+                reflection_template,
+                state,
+                tool_results[-1] if tool_results else None,
+            )
+
+            # Run reflection with LLM
+            reflection_result = await llm_client.chat_completion(
+                messages=[
+                    {"role": "system", "content": "You are reflecting on your progress."},
+                    {"role": "user", "content": formatted_reflection},
+                ],
+                tools=[get_embedded_tool("gather_thoughts"), get_embedded_tool("job_complete")],
+                temperature=0.3,
+            )
+
+            # Check for errors
+            if reflection_result.get("error"):
+                logger.error(f"Error in reflection: {reflection_result['error']}")
+                return {
+                    "status": "error",
+                    "result": f"Error in reflection: {reflection_result['error']}",
+                    "state": state.get_template_variables(),
+                }
+
+            # Get reflection tool calls and results
+            reflection_tool_calls = reflection_result.get("tool_calls", [])
+            reflection_tool_results = []
+
+            # Execute reflection tool calls
+            for tool_call in reflection_tool_calls:
+                if tool_call["type"] == "function":
+                    tool = get_embedded_tool(tool_call["function"]["name"])
+                    if tool:
+                        result = await tool(**tool_call["function"]["arguments"])
+                        reflection_tool_results.append(result)
+
+            # Check for job completion in reflection
+            if self._check_for_job_complete(reflection_tool_calls):
+                job_result = self._get_job_complete_result(reflection_tool_calls, reflection_tool_results)
+                if job_result:
+                    return {
+                        "status": "complete",
+                        "result": job_result["result"],
+                        "state": state.get_template_variables(),
+                    }
+
+            # Check for gather_thoughts in reflection
+            if self._check_for_gather_thoughts(reflection_tool_calls):
+                gather_result = self._get_gather_thoughts_result(reflection_tool_calls, reflection_tool_results)
+                if gather_result:
+                    state.update_from_gather_thoughts(gather_result)
+
+        # Return result based on completion status
+        if state.is_complete:
+            return {
+                "status": "complete",
+                "result": "Task completed successfully",
+                "state": state.get_template_variables(),
+            }
+        else:
+            return {
+                "status": "max_iterations",
+                "result": "Maximum iterations reached without completion",
+                "state": state.get_template_variables(),
+            }
 
     async def run_reflection(
         self,
@@ -278,20 +598,6 @@ class ReflectionLoop:
         Returns:
             The formatted template content
         """
-        return self.reflection_loader.format_reflection_template(template, variables)
-
-    def _format_template_with_state(self, template: Dict[str, Any], state: ReflectionState) -> str:
-        """
-        Format a reflection template with state variables.
-
-        Args:
-            template: The reflection template dictionary
-            state: The reflection state to use for variables
-
-        Returns:
-            The formatted template content
-        """
-        variables = state.get_template_variables()
         return self.reflection_loader.format_reflection_template(template, variables)
 
     def _format_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> str:

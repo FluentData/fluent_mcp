@@ -26,6 +26,12 @@ class InvalidApplicationModeError(ReflectionLoaderError):
     pass
 
 
+class TemplateNotFoundError(ReflectionLoaderError):
+    """Exception raised when a template cannot be found."""
+
+    pass
+
+
 class ReflectionLoader:
     """
     Loader for reflection templates.
@@ -78,7 +84,11 @@ class ReflectionLoader:
                 try:
                     template = parse_markdown_with_frontmatter(file_path)
                     name = template["config"]["name"]
-                    self.base_templates[name] = template
+                    self.base_templates[name] = {
+                        "template": template["template"],
+                        "config": template["config"],
+                        "path": file_path,
+                    }
                     logger.info(f"Loaded base template: {name} from {file_path}")
                 except Exception as e:
                     logger.error(f"Error loading base template {file_path}: {str(e)}")
@@ -94,7 +104,11 @@ class ReflectionLoader:
             try:
                 template = parse_markdown_with_frontmatter(custom_template_path)
                 name = template["config"]["name"]
-                self.custom_templates[name] = template
+                self.custom_templates[name] = {
+                    "template": template["template"],
+                    "config": template["config"],
+                    "path": custom_template_path,
+                }
                 logger.info(f"Loaded custom template: {name} from {custom_template_path}")
             except Exception as e:
                 logger.error(f"Error loading custom template {custom_template_path}: {str(e)}")
@@ -114,7 +128,11 @@ class ReflectionLoader:
                 try:
                     template = parse_markdown_with_frontmatter(file_path)
                     name = template["config"]["name"]
-                    self.tool_templates[name] = template
+                    self.tool_templates[name] = {
+                        "template": template["template"],
+                        "config": template["config"],
+                        "path": file_path,
+                    }
                     logger.info(f"Loaded tool template: {name} from {file_path}")
 
                     # Log if tools are defined in the template
@@ -123,6 +141,63 @@ class ReflectionLoader:
                         logger.info(f"Template '{name}' applies to {len(tool_names)} tools: {', '.join(tool_names)}")
                 except Exception as e:
                     logger.error(f"Error loading tool template {file_path}: {str(e)}")
+
+    def find_template_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Find a template by its name across all template types.
+
+        Args:
+            name: The name of the template to find
+
+        Returns:
+            The template dictionary if found, None otherwise
+        """
+        # Check base templates
+        if name in self.base_templates:
+            return self.base_templates[name]
+
+        # Check custom templates
+        if name in self.custom_templates:
+            return self.custom_templates[name]
+
+        # Check tool templates
+        if name in self.tool_templates:
+            return self.tool_templates[name]
+
+        return None
+
+    def get_tool_template(self, tool_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get the tool template for a specific tool.
+
+        This method returns the appropriate tool template based on the tool name:
+        1. If a tool name is provided, it looks for a tool-specific template
+        2. If no tool-specific template exists, it returns the base tool_use template
+        3. If no tool_use template exists, it raises an error
+
+        Args:
+            tool_name: Optional name of the tool to get the template for
+
+        Returns:
+            A dictionary containing the tool template
+
+        Raises:
+            TemplateNotFoundError: If no suitable template can be found
+        """
+        # If a tool name is provided, look for a tool-specific template
+        if tool_name:
+            for template in self.tool_templates.values():
+                if "tools" in template["config"] and tool_name in template["config"]["tools"]:
+                    logger.info(f"Found tool-specific template for {tool_name}")
+                    return {"content": template["template"], "config": template["config"].copy()}
+
+        # Fall back to the base tool_use template
+        tool_use_template = self.base_templates.get("tool_use")
+        if tool_use_template:
+            logger.info("Using base tool_use template")
+            return {"content": tool_use_template["template"], "config": tool_use_template["config"].copy()}
+
+        raise TemplateNotFoundError("No tool template found and no base tool_use template available")
 
     def get_reflection_template(self, tool_name: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -138,14 +213,19 @@ class ReflectionLoader:
 
         Returns:
             A dictionary containing the combined reflection template
+
+        Raises:
+            TemplateNotFoundError: If no base reflection template is found
         """
         combined_template = {"content": "", "config": {}}
 
         # Start with the base reflection template
         base_template = self.base_templates.get("base_reflection")
-        if base_template:
-            combined_template["content"] = base_template["template"]
-            combined_template["config"] = base_template["config"].copy()
+        if not base_template:
+            raise TemplateNotFoundError("Base reflection template not found")
+
+        combined_template["content"] = base_template["template"]
+        combined_template["config"] = base_template["config"].copy()
 
         # Apply custom reflection template if available
         custom_template = self.custom_templates.get("custom_reflection")
@@ -165,7 +245,7 @@ class ReflectionLoader:
 
         # Apply tool-specific reflection template if available and applicable
         if tool_name:
-            for template_name, template in self.tool_templates.items():
+            for template in self.tool_templates.values():
                 if "tools" in template["config"] and tool_name in template["config"]["tools"]:
                     application_mode = template["config"].get("application_mode", "append")
                     if application_mode == "append":
@@ -173,32 +253,17 @@ class ReflectionLoader:
                     elif application_mode == "overwrite":
                         combined_template["content"] = template["template"]
                     else:
-                        logger.warning(
-                            f"Invalid application mode '{application_mode}' in tool template {template_name}"
-                        )
+                        logger.warning(f"Invalid application mode '{application_mode}' in tool template")
 
                     # Update config
                     for key, value in template["config"].items():
                         if key not in ["application_mode", "tools"]:
                             combined_template["config"][key] = value
 
-                    logger.info(f"Applied tool-specific template '{template_name}' for tool '{tool_name}'")
+                    logger.info(f"Applied tool-specific template for tool '{tool_name}'")
+                    break
 
         return combined_template
-
-    def get_tool_use_template(self) -> Dict[str, Any]:
-        """
-        Get the tool use template.
-
-        Returns:
-            A dictionary containing the tool use template
-        """
-        tool_use_template = self.base_templates.get("tool_use")
-        if not tool_use_template:
-            logger.warning("Tool use template not found")
-            return {"content": "", "config": {}}
-
-        return {"content": tool_use_template["template"], "config": tool_use_template["config"].copy()}
 
     def format_reflection_template(self, template: Dict[str, Any], variables: Dict[str, Any]) -> str:
         """

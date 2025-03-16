@@ -1,0 +1,162 @@
+---
+description: Example templates to guide the implementation of reflection templates
+globs: []
+alwaysApply: false
+---
+
+# Template Examples for Structured Reflection Loop
+
+## Directory Structure
+
+```
+fluent_mcp/
+└── core/
+    └── templates/
+        └── reflection/
+            ├── base_reflection.md
+            ├── tool_use.md
+            └── tools/
+                ├── gather_thoughts.md
+                ├── job_complete.md
+                ├── web_research_job_complete.md
+                └── web_research_reflection.md
+```
+
+## Base Reflection Template Example
+
+```markdown
+---
+name: base_reflection
+description: Standard base reflection template for the structured reflection loop
+application_mode: base
+---
+
+# Reflection on Tool Usage
+
+## Original Task
+{{original_task}}
+
+## Previous Tool Execution
+Tool: {{tool_name}}
+Arguments: {{tool_arguments}}
+Results: {{tool_results}}
+
+## Current Workflow State
+{{workflow_state}}
+
+## Reflection Questions
+1. What new information did you learn from this tool execution?
+2. How does this information relate to what you already know?
+3. What important facts should be added to your workflow state?
+4. What is your next step, and why?
+5. Is the task complete, or do you need more information?
+
+## Remaining Budget
+You have {{remaining_budget}} iterations remaining.
+
+## Instructions
+Use the gather_thoughts tool to:
+1. Provide your analysis of the current situation
+2. Plan your next steps
+3. Update the workflow_state with accumulated information
+4. Indicate if the task is complete
+
+Remember to structure the workflow_state using markdown formatting (headers, lists, etc.) to organize the information clearly.
+```
+
+## Tool Use Template Example
+
+```markdown
+---
+name: tool_use
+description: Standard template for tool usage instructions in the structured reflection loop
+application_mode: base
+---
+
+# Task Execution
+
+## Original Task
+{{original_task}}
+
+## Current Analysis
+{{analysis}}
+
+## Next Steps
+{{next_steps}}
+
+## Accumulated Information
+{{workflow_state}}
+
+## Budget Information
+You have {{remaining_budget}} iterations remaining.
+
+## Available Tools
+{{tool_descriptions}}
+
+## Instructions
+Use the available tools to complete the task. Based on your next steps plan and the available information, select the most appropriate tool to make progress.
+
+If you have gathered sufficient information and the task is complete, use the job_complete tool to finish the task and return the results to the user.
+
+When using a tool, ensure you provide all required arguments and format them correctly.
+```
+
+## Tool-Specific Templates Example: Web Research
+
+```markdown
+---
+name: web_research_reflection
+description: Tool-specific reflection template for web research
+application_mode: append
+tools:
+  - web_search
+  - extract_information
+  - search_documents
+---
+
+# Web Research Reflection
+
+## Research-Specific Questions
+1. Have you explored all relevant sources?
+2. Are there any conflicting pieces of information?
+3. Do you have sufficient evidence to support your conclusions?
+4. Are there any gaps in your research that need to be addressed?
+
+## Research Organization
+Make sure your workflow state includes:
+- Clear sections for different topics
+- Proper citation of sources
+- Distinction between facts and interpretations
+- Identification of any uncertainties or open questions
+```
+
+## Job Complete Template Example: Web Research
+
+```markdown
+---
+name: web_research_job_complete
+description: Tool-specific job_complete template for web research
+tools:
+  - web_search
+  - extract_information
+  - search_documents
+---
+
+# Web Research Report Structure
+
+When completing a web research task, structure your output as follows:
+
+## Title
+Provide a clear and concise title that summarizes the research topic.
+
+## Executive Summary
+A brief (2-3 paragraphs) summary of the key findings and conclusions.
+
+## Detailed Findings
+The main body of the report, organized by topic with clear headings and subheadings.
+
+## References
+A list of all sources consulted, with URLs where applicable.
+
+Use the web_research_job_complete tool with these parameters to generate a properly formatted research report.
+```

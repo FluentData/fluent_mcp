@@ -1,197 +1,230 @@
-# Reflection System in Fluent MCP
+# Structured Reflection System
 
-The Reflection System in Fluent MCP provides a structured approach for language models to reflect on their reasoning process and improve their performance through iterative refinement. This document explains how to use the reflection system and how to customize it for your specific needs.
+The structured reflection system in Fluent MCP enables tools to reflect on their execution, accumulate knowledge, and make informed decisions about task completion. This document explains how to use and customize the reflection system.
 
 ## Overview
 
-The reflection system works by:
+### What is Structured Reflection?
 
-1. Running an initial embedded reasoning process
-2. Analyzing the reasoning and tool usage
-3. Providing structured feedback through templates
-4. Running additional reasoning iterations with improved approaches
-5. Returning the final, improved result
+The structured reflection loop is a process that allows tools to:
+1. Execute actions and analyze their results
+2. Accumulate knowledge in a structured workflow state
+3. Make decisions about next steps
+4. Determine when a task is complete
 
-This process helps language models to:
+### Key Components
 
-- Identify and correct errors in their reasoning
-- Improve tool selection and usage
-- Handle complex tasks more effectively
-- Provide more accurate and comprehensive responses
+1. **ReflectionState**: Tracks task progress, budget, and accumulated knowledge
+2. **ReflectionLoader**: Manages templates for reflection and tool usage
+3. **ReflectionLoop**: Orchestrates the reflection process
+4. **Standard Tools**: `gather_thoughts` and `job_complete` for state management
 
-## Directory Structure
+## Template System
 
-The reflection system uses a hierarchical template structure:
+### Directory Structure
 
+Templates are located in `fluent_mcp/core/templates/reflection/`:
 ```
-fluent_mcp/core/templates/reflection/
-├── base_reflection.md       # Base reflection template (applies to all tools)
-├── custom_reflection.md     # Domain-specific reflection (optional)
-├── tool_use.md              # Tool usage guidelines
+reflection/
+├── base_reflection.md    # Base reflection template
+├── tool_use.md          # Generic tool usage template
+├── custom_reflection.md # Optional custom reflection rules
 └── tools/
-    ├── database_reflection.md      # Tool-specific reflection for database tools
-    ├── file_operations_reflection.md  # Tool-specific reflection for file operations
-    └── ...                 # Other tool-specific reflection templates
+    ├── gather_thoughts.md  # Template for gather_thoughts tool
+    └── job_complete.md     # Template for job_complete tool
 ```
 
-## Template Hierarchy
+### Template Types
 
-The reflection system uses a hierarchical approach to combine templates:
+1. **Base Templates**:
+   - `base_reflection.md`: Core reflection structure
+   - `tool_use.md`: Standard tool usage guidance
 
-1. **Base Reflection Template**: Applied to all reflection processes
-2. **Custom Reflection Template**: Domain-specific reflection that can be customized per project
-3. **Tool-Specific Reflection Templates**: Applied based on the tools used in the reasoning process
+2. **Custom Templates**:
+   - `custom_reflection.md`: Project-specific reflection rules
+   - Application modes: "append" or "overwrite"
 
-Each template can specify an `application_mode` in its frontmatter:
+3. **Tool-Specific Templates**:
+   - Located in `tools/` directory
+   - Can be associated with specific tools
+   - Override or extend base templates
 
-- `base`: The template serves as the base for reflection (default for base templates)
-- `append`: The template content is appended to the previous level's content (default for custom and tool templates)
-- `overwrite`: The template content replaces the previous level's content
+### Template Variables
 
-## Using the Reflection System
+Common variables available in templates:
+- `{{original_task}}`: The initial task description
+- `{{tool_name}}`: Current tool being used
+- `{{tool_arguments}}`: Arguments passed to the tool
+- `{{tool_results}}`: Results from tool execution
+- `{{analysis}}`: Current analysis of the situation
+- `{{next_steps}}`: Planned next actions
+- `{{workflow_state}}`: Accumulated knowledge
+- `{{remaining_budget}}`: Remaining reflection iterations
+- `{{initial_budget}}`: Starting budget
 
-To use the reflection system, simply enable it when calling `run_embedded_reasoning`:
+## Using Reflection with Tools
+
+### Registering a Tool with Reflection
+
+Use the `@register_external_tool` decorator with reflection options:
 
 ```python
-from fluent_mcp.core.llm_client import run_embedded_reasoning
-
-result = await run_embedded_reasoning(
-    system_prompt="You are a helpful assistant that can use tools.",
-    user_prompt="Please help me with this task...",
-    tools=my_tools,
-    enable_reflection=True,
-    max_reflection_iterations=3
+@register_external_tool(
+    name="my_tool",
+    use_reflection=True,
+    reflection_budget=5
 )
-
-# Access reflection history
-if "reflection_history" in result:
-    for i, reflection in enumerate(result["reflection_history"]):
-        print(f"Reflection {i+1}: {reflection['reflection']}")
+async def my_tool(arg1: str, arg2: int) -> Dict[str, Any]:
+    """Tool implementation"""
+    pass
 ```
 
-## Template Format
+Parameters:
+- `name`: Optional custom name for the tool
+- `use_reflection`: Enable/disable reflection (default: True)
+- `reflection_budget`: Maximum reflection iterations (default: 5)
 
-Reflection templates use Markdown with YAML frontmatter. Here's an example:
+### Required Tool Arguments
 
-```markdown
----
-name: base_reflection
-description: Standard base reflection template that applies to all tools
-application_mode: base
----
-
-# Base Reflection Template
-
-## Previous Reasoning
-```
-{{previous_reasoning}}
-```
-
-## Tool Usage Analysis
-Review your previous reasoning and tool usage:
-
-1. Did you correctly understand the user's request?
-2. Did you select the most appropriate tools for the task?
-3. ...
-
-## Improvement Plan
-Based on your analysis, outline specific improvements for your next attempt:
-
-1. How will you better understand the user's request?
-2. Which tools will you use and why?
-3. ...
-```
-
-## Creating Custom Templates
-
-You can create custom reflection templates for specific domains or tools:
-
-### Domain-Specific Template
-
-```markdown
----
-name: custom_reflection
-description: Domain-specific reflection for financial analysis
-application_mode: append
----
-
-# Financial Analysis Reflection
-
-## Domain-Specific Considerations
-When reflecting on financial analysis tasks:
-
-1. Did you consider all relevant financial metrics?
-2. Did you apply appropriate financial models?
-3. ...
-```
-
-### Tool-Specific Template
-
-```markdown
----
-name: database_reflection
-description: Tool-specific reflection for database operations
-application_mode: append
-tools:
-  - query_database
-  - update_database
-  - create_table
----
-
-# Database Operations Reflection
-
-## Database-Specific Considerations
-When working with database operations, consider:
-
-1. Did you use the most efficient query structure?
-2. Did you properly handle database connections?
-3. ...
-```
-
-## Customizing the Reflection Process
-
-You can customize the reflection process by:
-
-1. **Creating new templates**: Add new templates to the appropriate directories
-2. **Modifying existing templates**: Update the content of existing templates
-3. **Changing application modes**: Adjust how templates are combined
-4. **Extending the ReflectionLoop class**: Implement custom reflection logic
-
-## Advanced Usage
-
-For advanced usage, you can directly use the `ReflectionLoop` class:
-
+When calling a tool with reflection enabled:
 ```python
-from fluent_mcp.core.reflection import ReflectionLoop
-from fluent_mcp.core.reflection_loader import ReflectionLoader
-
-# Create a custom reflection loader
-reflection_loader = ReflectionLoader(templates_dir="/path/to/custom/templates")
-
-# Create a reflection loop instance
-reflection_loop = ReflectionLoop(reflection_loader=reflection_loader)
-
-# Run the reflection process
-reflection_result = await reflection_loop.run_reflection(
-    previous_reasoning="Initial reasoning output...",
-    tool_calls=initial_tool_calls,
-    tool_results=initial_tool_results,
-    llm_client=my_llm_client,
-    system_prompt="System prompt...",
-    user_prompt="User prompt...",
-    max_iterations=5
+result = await my_tool(
+    arg1="value1",
+    arg2=42,
+    task="Description of what to accomplish",  # Required
+    llm_client=llm_client  # Required for reflection
 )
+```
+
+## Workflow State Management
+
+### State Structure
+
+The workflow state should be formatted in markdown:
+
+```markdown
+# Task Progress
+
+## Key Findings
+- Important discovery 1
+- Important discovery 2
+
+## Open Questions
+1. Question to investigate
+2. Area to explore
+
+## Evidence and Sources
+* Source 1: Key points
+* Source 2: Relevant information
+
+## Current Status
+Summary of where we are in the process
+```
+
+### State Updates
+
+Use the `gather_thoughts` tool to update state:
+```python
+{
+    "analysis": "Current situation analysis",
+    "next_steps": "Planned actions",
+    "workflow_state": "Markdown formatted state",
+    "is_complete": False  # or True when done
+}
 ```
 
 ## Best Practices
 
-1. **Start with base templates**: Use the provided base templates as a starting point
-2. **Create domain-specific templates**: Add domain knowledge to improve reflection
-3. **Create tool-specific templates**: Add specialized guidance for complex tools
-4. **Use clear placeholders**: Make sure templates have clear placeholders for dynamic content
-5. **Balance detail and brevity**: Provide enough guidance without overwhelming the model
-6. **Test and iterate**: Refine templates based on actual performance
+1. **Task Description**:
+   - Be specific about objectives
+   - Include success criteria
+   - Specify any constraints
 
-## Conclusion
+2. **Workflow State**:
+   - Use clear hierarchical structure
+   - Keep information organized by topic
+   - Update incrementally
+   - Link related information
 
-The reflection system in Fluent MCP provides a powerful way to improve the reasoning capabilities of language models. By using structured templates and iterative refinement, you can help models better understand tasks, select appropriate tools, and provide more accurate and comprehensive responses. 
+3. **Reflection Budget**:
+   - Set based on task complexity
+   - Consider cost/performance tradeoffs
+   - Monitor usage patterns
+
+4. **Template Customization**:
+   - Start with base templates
+   - Add tool-specific templates as needed
+   - Use custom templates for project standards
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Template Not Found**:
+   - Check template directory structure
+   - Verify template names match configuration
+   - Ensure proper file extensions (.md)
+
+2. **Budget Exhaustion**:
+   - Increase reflection_budget if needed
+   - Check for infinite loops
+   - Optimize decision making
+
+3. **State Management**:
+   - Verify markdown formatting
+   - Check for missing sections
+   - Ensure proper variable substitution
+
+4. **LLM Integration**:
+   - Confirm llm_client is provided
+   - Check API configuration
+   - Verify tool registration
+
+### Debug Tips
+
+1. Enable debug logging:
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
+2. Monitor template loading:
+```python
+loader = ReflectionLoader()
+loader.load_templates()  # Check logs for loading status
+```
+
+3. Inspect state updates:
+```python
+print(state.get_template_variables())  # View current state
+```
+
+## Example Implementation
+
+See `fluent_mcp/examples/structured_reflection_example.py` for a complete example showing:
+1. Tool registration with reflection
+2. Mock LLM client setup
+3. Workflow state accumulation
+4. Task completion process
+
+## Advanced Topics
+
+1. **Custom Template Creation**:
+   - Follow frontmatter format
+   - Define application mode
+   - Specify tool associations
+
+2. **State Persistence**:
+   - Implement custom state storage
+   - Handle long-running tasks
+   - Manage state across sessions
+
+3. **Integration Patterns**:
+   - Combine multiple tools
+   - Chain reflection loops
+   - Share workflow state
+
+4. **Error Recovery**:
+   - Handle partial results
+   - Implement retry logic
+   - Preserve state on failure 

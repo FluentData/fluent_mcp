@@ -1,0 +1,83 @@
+---
+description: Rules for creating and updating reflection templates in Fluent MCP
+globs: ["fluent_mcp/core/templates/reflection/*.md", "fluent_mcp/core/templates/reflection/tools/*.md"]
+alwaysApply: false
+---
+
+# Reflection Templates Implementation Rules
+
+## Overview
+These rules define the requirements for the template files needed for the structured reflection loop.
+
+## Base Templates
+
+1. `tool_use.md` Template:
+   - Must be located at `fluent_mcp/core/templates/reflection/tool_use.md`
+   - Must include proper YAML frontmatter with name, description, and application_mode
+   - Must include sections for:
+     - Original task description
+     - Current analysis
+     - Next steps planning
+     - Accumulated workflow state
+     - Budget information
+     - Available tools
+   - Must use standard variable placeholders:
+     - `{{original_task}}`
+     - `{{analysis}}`
+     - `{{next_steps}}`
+     - `{{workflow_state}}`
+     - `{{remaining_budget}}`
+     - `{{tool_descriptions}}`
+
+2. `reflection.md` Template:
+   - Must be located at `fluent_mcp/core/templates/reflection/base_reflection.md`
+   - Must include proper YAML frontmatter with name, description, and application_mode
+   - Must include sections for:
+     - Original task description
+     - Previous tool execution results
+     - Current workflow state
+     - Reflection guidance questions
+   - Must guide the LLM to:
+     - Analyze tool results
+     - Update workflow state
+     - Plan next steps
+     - Assess task completion
+   - Must use standard variable placeholders:
+     - `{{original_task}}`
+     - `{{tool_name}}`
+     - `{{tool_arguments}}`
+     - `{{tool_results}}`
+     - `{{workflow_state}}`
+
+## Standard Tools Templates
+
+1. `job_complete.md` Template:
+   - Must be located at `fluent_mcp/core/templates/reflection/tools/job_complete.md`
+   - Must include proper YAML frontmatter with name, description, and applicable tools
+   - Must provide guidance on when and how to use the job_complete tool
+   - Must explain the single result parameter
+
+2. `gather_thoughts.md` Template:
+   - Must be located at `fluent_mcp/core/templates/reflection/tools/gather_thoughts.md`
+   - Must include proper YAML frontmatter with name, description, and applicable tools
+   - Must explain all parameters:
+     - analysis
+     - next_steps
+     - workflow_state
+     - is_complete
+   - Must provide guidance on formatting workflow state as markdown
+   - Must include examples of different workflow state structures
+
+## Tool-Specific Templates
+
+1. For each tool type requiring specific reflection guidance:
+   - Must create a template at `fluent_mcp/core/templates/reflection/tools/<tool_type>_reflection.md`
+   - Must include proper YAML frontmatter with name, description, application_mode, and applicable tools
+   - Must provide domain-specific reflection guidance
+   - Must be compatible with the base reflection template
+
+2. For tools requiring specific job completion formats:
+   - Must create a template at `fluent_mcp/core/templates/reflection/tools/<tool_type>_job_complete.md`
+   - Must include proper YAML frontmatter with name, description, and applicable tools
+   - Must document all parameters specific to that job complete function
+   - Must explain how parameters will be formatted in the final output

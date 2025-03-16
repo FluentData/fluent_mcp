@@ -18,10 +18,14 @@ This architectural pattern ensures a clear separation between internal tools use
 the embedded reasoning engine and external tools exposed to consuming LLMs.
 """
 
+import asyncio
 import functools
 import inspect
 import logging
-from typing import Any, Callable, Dict, List, Optional, get_args, get_origin, get_type_hints
+from typing import Any, Callable, Dict, List, Optional, Union, get_args, get_origin, get_type_hints
+
+from fluent_mcp.core.error_handling import MCPError
+from fluent_mcp.core.reflection import ReflectionLoop
 
 # Global registry for embedded tools
 _embedded_tools = {}
@@ -65,7 +69,11 @@ def register_embedded_tool(name: Optional[str] = None):
     return decorator
 
 
-def register_external_tool(name: Optional[str] = None):
+def register_external_tool(
+    name: Optional[str] = None,
+    use_reflection: bool = True,
+    reflection_budget: int = 5,
+):
     """
     Decorator to register a function as an external tool.
 
@@ -74,11 +82,23 @@ def register_external_tool(name: Optional[str] = None):
     Use these for operations that you want to expose to consuming LLMs, such as data retrieval,
     code generation, or other capabilities you want to provide to external AI systems.
 
+    The decorator supports structured reflection, allowing tools to use the reflection loop
+    for improved reasoning and decision making.
+
     Args:
         name: Optional name for the tool. If not provided, the function name will be used.
+        use_reflection: Whether to enable structured reflection for this tool (default: True)
+        reflection_budget: Number of iterations for reflection (default: 5)
 
     Returns:
         The decorated function.
+
+    Example:
+        @register_external_tool(use_reflection=True, reflection_budget=10)
+        async def web_research(query: str, task: str = 'Research this topic') -> str:
+            '''Research a topic on the web.'''
+            # Implementation details...
+            return result
     """
 
     def decorator(func):
@@ -86,12 +106,51 @@ def register_external_tool(name: Optional[str] = None):
         tool_name = name or func.__name__
 
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
+        async def wrapper(*args, **kwargs):
+            try:
+                # If reflection is disabled, execute the function directly
+                if not use_reflection:
+                    if asyncio.iscoroutinefunction(func):
+                        return await func(*args, **kwargs)
+                    return func(*args, **kwargs)
+
+                # Get the task from kwargs or use a default
+                task = kwargs.get("task", "Execute this tool")
+
+                # Create reflection loop instance
+                reflection_loop = ReflectionLoop()
+
+                # Get the LLM client from kwargs (required for reflection)
+                llm_client = kwargs.get("llm_client")
+                if not llm_client:
+                    raise MCPError("LLM client is required for reflection")
+
+                # Run the structured reflection loop
+                reflection_result = await reflection_loop.run_structured_reflection_loop(
+                    original_task=task,
+                    tool_name=tool_name,
+                    llm_client=llm_client,
+                    initial_budget=reflection_budget,
+                    max_iterations=reflection_budget,
+                )
+
+                # Check reflection status
+                if reflection_result["status"] == "complete":
+                    return reflection_result["result"]
+                elif reflection_result["status"] == "budget_exhausted":
+                    raise MCPError("Reflection budget exhausted before completion")
+                elif reflection_result["status"] == "error":
+                    raise MCPError(f"Reflection error: {reflection_result['result']}")
+                else:
+                    raise MCPError(f"Unexpected reflection status: {reflection_result['status']}")
+
+            except Exception as e:
+                logger.error(f"Error in external tool {tool_name}: {str(e)}")
+                raise MCPError(f"Tool execution failed: {str(e)}")
 
         # Register the tool
         _external_tools[tool_name] = wrapper
-        logger.info(f"Registered external tool: {tool_name}")
+        logger.info(f"Registered external tool: {tool_name} (reflection: {use_reflection})")
 
         return wrapper
 
@@ -316,3 +375,74 @@ def register_external_tools(tools: List[Callable]) -> None:
             logger.info(f"Registered external tool: {tool_name}")
         else:
             logger.warning(f"Skipping non-callable external tool: {tool}")
+
+
+@register_embedded_tool()
+def gather_thoughts(
+    analysis: str,
+    next_steps: str,
+    workflow_state: str,
+    is_complete: bool = False,
+) -> Dict[str, Any]:
+    """
+    Gather thoughts and insights during the structured reflection process.
+
+    This tool is used by the embedded LLM to record its analysis, plan next steps,
+    and update the workflow state during the structured reflection loop. It helps
+    track progress and maintain state across iterations of the reflection process.
+
+    The tool is typically called when the LLM has:
+    1. Analyzed the current situation or previous actions
+    2. Determined the next steps to take
+    3. Updated its understanding of the workflow state
+    4. Decided whether the task is complete
+
+    Args:
+        analysis: Current analysis of the situation, including insights and observations
+        next_steps: Planned next steps or actions to take
+        workflow_state: Current state of the workflow, tracking progress and decisions
+        is_complete: Whether the reflection process is complete (default: False)
+
+    Returns:
+        A dictionary containing:
+        - status: 'complete' if is_complete is True, otherwise 'in_progress'
+        - analysis: The provided analysis
+        - next_steps: The provided next steps
+        - workflow_state: The provided workflow state
+    """
+    return {
+        "status": "complete" if is_complete else "in_progress",
+        "analysis": analysis,
+        "next_steps": next_steps,
+        "workflow_state": workflow_state,
+    }
+
+
+@register_embedded_tool()
+def job_complete(result: str) -> Dict[str, Any]:
+    """
+    Mark a job as complete and provide the final result.
+
+    This tool is used by the embedded LLM to indicate that a task has been
+    completed successfully and to provide the final result. It should be called
+    when the LLM has:
+    1. Successfully completed all required steps
+    2. Generated a satisfactory final result
+    3. Determined that no further reflection is needed
+
+    The tool helps maintain a clear separation between in-progress work and
+    completed tasks, making it easier to track the status of long-running
+    or complex operations.
+
+    Args:
+        result: The final result or output of the completed task
+
+    Returns:
+        A dictionary containing:
+        - status: Always 'complete'
+        - result: The provided final result
+    """
+    return {
+        "status": "complete",
+        "result": result,
+    }

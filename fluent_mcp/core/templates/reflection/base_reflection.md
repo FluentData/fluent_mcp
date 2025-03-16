@@ -1,39 +1,49 @@
 ---
 name: base_reflection
-description: Standard base reflection template that applies to all tools
+description: Standard base reflection template for the structured reflection loop
 application_mode: base
 ---
 
-# Base Reflection Template
+# Reflection on Tool Usage
 
-## Context
-You are currently engaged in a reflection process to improve your reasoning and tool usage.
+## Original Task
+{{original_task}}
 
-## Previous Reasoning
-```
-{{previous_reasoning}}
-```
+## Previous Tool Execution
+Tool: {{tool_name}}
+Arguments: {{tool_arguments}}
+Results: {{tool_results}}
 
-## Tool Usage Analysis
-Review your previous reasoning and tool usage:
+## Current State Analysis
 
-1. Did you correctly understand the user's request?
-2. Did you select the most appropriate tools for the task?
-3. Did you use the tools correctly and efficiently?
-4. Were there any errors or misunderstandings in your reasoning?
-5. Could you have achieved the same result with fewer tool calls?
+### Progress Made
+{{analysis}}
 
-## Improvement Plan
-Based on your analysis, outline specific improvements for your next attempt:
+### Next Steps
+{{next_steps}}
 
-1. How will you better understand the user's request?
-2. Which tools will you use and why?
-3. How will you use these tools more effectively?
-4. How will you avoid previous errors or misunderstandings?
+### Accumulated Knowledge
+{{workflow_state}}
 
-## Revised Approach
-Provide a clear, step-by-step plan for your next attempt:
+## Reflection Questions
+1. What new information did you learn from this tool execution?
+2. How does this information relate to what you already know?
+3. What important facts should be added to your workflow state?
+4. What is your next step, and why?
+5. Is the task complete, or do you need more information?
 
-```
-{{revised_approach}}
-``` 
+## Budget Status
+You have {{remaining_budget}} iterations remaining out of {{initial_budget}}.
+
+## Instructions
+Use the gather_thoughts tool to:
+1. Provide your analysis of the current situation
+2. Plan your next steps
+3. Update the workflow_state with accumulated information
+4. Indicate if the task is complete
+
+Remember to:
+- Structure the workflow_state using markdown formatting
+- Be specific about what you learned and what you still need to know
+- Consider the remaining budget when planning next steps
+- Only mark the task as complete when you have sufficient information

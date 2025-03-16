@@ -1,0 +1,72 @@
+---
+description: Rules for implementing the structured reflection loop in Fluent MCP
+globs: ["fluent_mcp/core/reflection.py", "fluent_mcp/core/tool_registry.py"]
+alwaysApply: false
+---
+
+# Structured Reflection Loop Implementation Rules
+
+## Overview
+These rules define the requirements and guidelines for implementing the structured reflection loop in the Fluent MCP framework.
+
+## Class and File Structure
+
+1. Update the `ReflectionState` class in `fluent_mcp/core/reflection.py`:
+   - Must track original task, budget, analysis, next steps, and workflow state
+   - Must provide methods for updating from gather_thoughts results
+   - Must handle budget management
+   - Must track completion status
+
+2. Enhance the `ReflectionLoop` class in `fluent_mcp/core/reflection.py`:
+   - Must implement the full reflection loop flow
+   - Must support the standard tools (gather_thoughts, job_complete)
+   - Must maintain state across iterations
+   - Must handle completion detection
+   - Must enforce budget constraints
+
+3. Standard Tools in `fluent_mcp/core/tool_registry.py`:
+   - Must register gather_thoughts and job_complete tools
+   - Must support tool-specific job_complete variants
+   - Must document standard tools clearly
+
+## Template Requirements
+
+1. Base templates in `fluent_mcp/core/templates/reflection/`:
+   - `tool_use.md` must include sections for task, analysis, next steps, workflow state, and budget
+   - `reflection.md` must guide the LLM to evaluate tool results and update the workflow state
+   - Templates must use proper frontmatter configuration
+
+2. Template variables:
+   - Must support standard variables (task, analysis, next steps, workflow state, budget)
+   - Must properly format workflow state as markdown
+
+## Integration Requirements
+
+1. External tool decorator:
+   - Must support enabling/disabling reflection
+   - Must allow configuration of reflection budget
+   - Must properly pass state between iterations
+
+2. Error handling:
+   - Must handle budget exhaustion gracefully
+   - Must detect and report when no progress is being made
+   - Must provide clear error messages
+
+## Testing Requirements
+
+1. Unit tests in `tests/test_reflection.py`:
+   - Must test state tracking
+   - Must test budget management
+   - Must test workflow state updates
+   - Must test template formatting
+
+2. Integration tests in `tests/test_reflection_integration.py`:
+   - Must test complete reflection loop flow
+   - Must test with different tool types
+   - Must test budget enforcement
+
+## Documentation Requirements
+
+1. Update docstrings in all modified files
+2. Create examples demonstrating the reflection loop
+3. Update documentation in `docs/reflection_system.md`

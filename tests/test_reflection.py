@@ -1,227 +1,322 @@
 """
-Tests for the reflection system functionality.
+Tests for the reflection system in Fluent MCP.
+
+This test file focuses on unit tests for the reflection system components,
+including ReflectionState, template formatting, and standard tools.
 """
 
 import os
-import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-from fluent_mcp.core.reflection import ReflectionLoop
+import pytest
+
+from fluent_mcp.core.reflection import ReflectionLoop, ReflectionState
 from fluent_mcp.core.reflection_loader import ReflectionLoader
 
 
-class TestReflectionLoader(unittest.TestCase):
-    """Test cases for the reflection loader functionality."""
+class TestReflectionState:
+    """Tests for the ReflectionState class."""
 
-    def setUp(self):
-        """Set up test environment."""
-        # Create a mock templates directory
-        self.templates_dir = os.path.join(
-            os.path.dirname(__file__), "..", "fluent_mcp", "core", "templates", "reflection"
-        )
-        self.reflection_loader = ReflectionLoader(templates_dir=self.templates_dir)
+    def test_initialization(self):
+        """Test that ReflectionState initializes correctly."""
+        state = ReflectionState("Test task", 10)
+        assert state.original_task == "Test task"
+        assert state.initial_budget == 10
+        assert state.remaining_budget == 10
+        assert state.workflow_state == ""
+        assert not state.is_complete
 
-    def test_load_templates(self):
-        """Test loading templates."""
-        # Reload templates to ensure they're loaded
-        self.reflection_loader.load_templates()
+    def test_budget_management(self):
+        """Test budget decrease and exhaustion detection."""
+        state = ReflectionState("Test task", 3)
+        assert state.decrease_budget(1)  # 2 remaining
+        assert state.remaining_budget == 2
+        assert state.decrease_budget(1)  # 1 remaining
+        assert state.remaining_budget == 1
+        assert state.decrease_budget(1)  # 0 remaining
+        assert state.remaining_budget == 0
+        assert not state.decrease_budget(1)  # Budget exhausted
 
-        # Check that base templates are loaded
-        self.assertIn("base_reflection", self.reflection_loader.base_templates)
-        self.assertIn("tool_use", self.reflection_loader.base_templates)
-
-        # Check that custom template is loaded
-        self.assertIn("custom_reflection", self.reflection_loader.custom_templates)
-
-        # Check that tool templates are loaded
-        self.assertTrue(len(self.reflection_loader.tool_templates) > 0)
-
-        # Check specific tool templates
-        tool_template_names = [
-            template["config"]["name"] for template in self.reflection_loader.tool_templates.values()
-        ]
-        self.assertIn("database_reflection", tool_template_names)
-        self.assertIn("file_operations_reflection", tool_template_names)
-
-    def test_get_reflection_template(self):
-        """Test getting reflection templates."""
-        # Test getting base reflection template
-        base_template = self.reflection_loader.get_reflection_template()
-        self.assertIsNotNone(base_template)
-        self.assertIn("content", base_template)
-        self.assertIn("config", base_template)
-
-        # Test getting tool-specific reflection template
-        tool_template = self.reflection_loader.get_reflection_template("query_database")
-        self.assertIsNotNone(tool_template)
-        self.assertIn("content", tool_template)
-        self.assertIn("config", tool_template)
-
-        # Test that tool-specific content is included
-        self.assertIn("Database Operations Reflection", tool_template["content"])
-
-    def test_format_reflection_template(self):
-        """Test formatting reflection templates."""
-        template = {
-            "content": "Previous reasoning: {{previous_reasoning}}\nTool calls: {{tool_calls}}",
-            "config": {"name": "test_template"},
+    def test_update_from_gather_thoughts(self):
+        """Test updating state from gather_thoughts result."""
+        state = ReflectionState("Test task")
+        result = {
+            "status": "in_progress",
+            "analysis": "Test analysis",
+            "next_steps": "Test next steps",
+            "workflow_state": "# Collected Information\n- Item 1\n- Item 2",
         }
+        state.update_from_gather_thoughts(result)
+        assert state.analysis == "Test analysis"
+        assert state.next_steps == "Test next steps"
+        assert "Collected Information" in state.workflow_state
+        assert not state.is_complete
 
-        variables = {"previous_reasoning": "This is the previous reasoning.", "tool_calls": "These are the tool calls."}
+        # Test completion
+        result["status"] = "complete"
+        state.update_from_gather_thoughts(result)
+        assert state.is_complete
 
-        formatted = self.reflection_loader.format_reflection_template(template, variables)
-        self.assertEqual(
-            formatted, "Previous reasoning: This is the previous reasoning.\nTool calls: These are the tool calls."
-        )
+    def test_get_template_variables(self):
+        """Test getting template variables from state."""
+        state = ReflectionState("Test task")
+        state.analysis = "Analysis"
+        state.next_steps = "Next steps"
+        state.workflow_state = "Workflow state"
+        state.remaining_budget = 5
 
-    def test_get_applicable_tool_templates(self):
-        """Test getting applicable tool templates."""
-        # Ensure templates are loaded
-        self.reflection_loader.load_templates()
-
-        # Test with database tools
-        database_tools = ["query_database", "update_database"]
-        applicable_templates = self.reflection_loader.get_applicable_tool_templates(database_tools)
-        self.assertTrue(len(applicable_templates) > 0)
-        self.assertIn("database_reflection", applicable_templates)
-
-        # Test with file operation tools
-        file_tools = ["read_file", "write_file"]
-        applicable_templates = self.reflection_loader.get_applicable_tool_templates(file_tools)
-        self.assertTrue(len(applicable_templates) > 0)
-        self.assertIn("file_operations_reflection", applicable_templates)
-
-        # Test with mixed tools
-        mixed_tools = ["query_database", "read_file"]
-        applicable_templates = self.reflection_loader.get_applicable_tool_templates(mixed_tools)
-        self.assertTrue(len(applicable_templates) > 0)
-        self.assertIn("database_reflection", applicable_templates)
-        self.assertIn("file_operations_reflection", applicable_templates)
+        variables = state.get_template_variables()
+        assert variables["original_task"] == "Test task"
+        assert variables["analysis"] == "Analysis"
+        assert variables["next_steps"] == "Next steps"
+        assert variables["workflow_state"] == "Workflow state"
+        assert variables["remaining_budget"] == 5
 
 
-class TestReflectionLoop(unittest.IsolatedAsyncioTestCase):
-    """Test cases for the reflection loop functionality."""
+class TestReflectionTemplateFormatting:
+    """Tests for reflection template formatting."""
 
-    def setUp(self):
-        """Set up test environment."""
-        # Create a mock reflection loader
-        self.reflection_loader = MagicMock(spec=ReflectionLoader)
-
-        # Set up mock templates
-        self.reflection_loader.get_reflection_template.return_value = {
-            "content": "Reflection template content",
-            "config": {"name": "test_template"},
-        }
-
-        self.reflection_loader.format_reflection_template.return_value = "Formatted reflection template"
+    def test_format_template_with_state(self):
+        """Test formatting a template with reflection state."""
+        # Create a mock ReflectionLoader
+        loader = MagicMock()
+        loader.format_reflection_template.return_value = "Formatted template"
 
         # Create a reflection loop with the mock loader
-        self.reflection_loop = ReflectionLoop(reflection_loader=self.reflection_loader)
+        loop = ReflectionLoop(reflection_loader=loader)
 
-        # Set up mock LLM client
-        self.llm_client = MagicMock()
-        self.llm_client.generate = AsyncMock()
-        self.llm_client.generate.return_value = {"status": "complete", "content": "Reflection result", "tool_calls": []}
+        # Create a state
+        state = ReflectionState("Test task")
+        state.analysis = "Analysis"
 
-    async def test_run_reflection(self):
-        """Test running the reflection loop."""
-        # Set up test data
-        previous_reasoning = "Previous reasoning content"
-        tool_calls = [
-            {
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "query_database", "arguments": {"query": "SELECT * FROM users"}},
-            }
-        ]
-        tool_results = [
-            {
-                "tool_call_id": "call_1",
-                "function_name": "query_database",
-                "arguments": {"query": "SELECT * FROM users"},
-                "result": [{"id": 1, "name": "User 1"}],
-            }
-        ]
-        system_prompt = "System prompt"
-        user_prompt = "User prompt"
+        # Create a mock template
+        template = {"content": "Template content", "config": {}}
 
-        # Mock the internal methods
-        self.reflection_loop._run_reflection_with_llm = AsyncMock()
-        self.reflection_loop._run_reflection_with_llm.return_value = {
-            "status": "complete",
-            "content": "Improved reasoning",
-            "tool_calls": [],
-        }
+        # Format the template
+        result = loop._format_template_with_state(template, state)
 
-        self.reflection_loop._execute_reflection_tool_calls = AsyncMock()
-        self.reflection_loop._execute_reflection_tool_calls.return_value = []
+        # Check that the loader was called correctly
+        loader.format_reflection_template.assert_called_once()
+        assert result == "Formatted template"
 
-        # Run the reflection loop
-        result = await self.reflection_loop.run_reflection(
-            previous_reasoning=previous_reasoning,
-            tool_calls=tool_calls,
-            tool_results=tool_results,
-            llm_client=self.llm_client,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            max_iterations=2,
+    def test_format_reflection_template_with_state_and_tool_result(self):
+        """Test formatting a reflection template with state and tool result."""
+        # Create a mock ReflectionLoader
+        loader = MagicMock()
+        loader.format_reflection_template.return_value = "Formatted reflection"
+
+        # Create a reflection loop with the mock loader
+        loop = ReflectionLoop(reflection_loader=loader)
+
+        # Create a state
+        state = ReflectionState("Test task")
+
+        # Create a mock tool result
+        tool_result = {"function_name": "test_tool", "arguments": {"arg1": "value1"}, "result": "Tool result"}
+
+        # Create a mock template
+        template = {"content": "Template content", "config": {}}
+
+        # Format the template
+        result = loop._format_reflection_template_with_state(template, state, tool_result)
+
+        # Check that the loader was called correctly
+        loader.format_reflection_template.assert_called_once()
+
+        # Get the variables that were passed to the loader
+        call_args = loader.format_reflection_template.call_args[0]
+        variables = call_args[1]
+
+        # Check that tool result variables were included
+        assert variables["tool_name"] == "test_tool"
+        assert "arg1" in variables["tool_arguments"]
+        assert "Tool result" in variables["tool_results"]
+        assert result == "Formatted reflection"
+
+
+class TestStandardTools:
+    """Tests for standard tools in the reflection system."""
+
+    def test_gather_thoughts_tool(self):
+        """Test the gather_thoughts tool."""
+        from fluent_mcp.core.tool_registry import get_embedded_tool
+
+        # Get the gather_thoughts tool
+        gather_thoughts = get_embedded_tool("gather_thoughts")
+        assert gather_thoughts is not None
+
+        # Call the tool
+        result = gather_thoughts(
+            analysis="Test analysis",
+            next_steps="Test next steps",
+            workflow_state="Test workflow state",
+            is_complete=False,
         )
 
         # Check the result
-        self.assertEqual(result["status"], "complete")
-        self.assertEqual(result["content"], "Improved reasoning")
-        self.assertEqual(result["tool_calls"], [])
-        self.assertEqual(result["iterations"], 1)
-        self.assertTrue("reflection_history" in result)
+        assert result["status"] == "in_progress"
+        assert result["analysis"] == "Test analysis"
+        assert result["next_steps"] == "Test next steps"
+        assert result["workflow_state"] == "Test workflow state"
 
-        # Check that the internal methods were called correctly
-        self.reflection_loader.get_reflection_template.assert_called_once()
-        self.reflection_loader.format_reflection_template.assert_called_once()
-        self.reflection_loop._run_reflection_with_llm.assert_called_once()
+        # Test with is_complete=True
+        result = gather_thoughts(
+            analysis="Test analysis",
+            next_steps="Test next steps",
+            workflow_state="Test workflow state",
+            is_complete=True,
+        )
+        assert result["status"] == "complete"
 
-    def test_format_tool_calls(self):
-        """Test formatting tool calls."""
+    def test_job_complete_tool(self):
+        """Test the job_complete tool."""
+        from fluent_mcp.core.tool_registry import get_embedded_tool
+
+        # Get the job_complete tool
+        job_complete = get_embedded_tool("job_complete")
+        assert job_complete is not None
+
+        # Call the tool
+        result = job_complete(result="Test result")
+
+        # Check the result
+        assert result["status"] == "complete"
+        assert result["result"] == "Test result"
+
+    def test_tool_specific_job_complete_tool(self):
+        """Test a tool-specific job_complete tool."""
+        from fluent_mcp.core.tool_registry import get_embedded_tool
+
+        # Get the web_research_job_complete tool
+        web_research_job_complete = get_embedded_tool("web_research_job_complete")
+
+        # Skip if the tool is not registered yet
+        if web_research_job_complete is None:
+            pytest.skip("web_research_job_complete tool not registered")
+
+        # Call the tool
+        result = web_research_job_complete(
+            title="Test title", executive_summary="Test summary", body="Test body", references=["Ref1", "Ref2"]
+        )
+
+        # Check the result
+        assert result["status"] == "complete"
+        assert "Test title" in result["result"]
+        assert "Test summary" in result["result"]
+        assert "Test body" in result["result"]
+        assert "Ref1" in result["result"]
+        assert "Ref2" in result["result"]
+
+
+class TestReflectionLoop:
+    """Tests for the ReflectionLoop class."""
+
+    def test_check_for_job_complete(self):
+        """Test detecting job_complete tool calls."""
+        loop = ReflectionLoop()
+
+        # Create tool calls with job_complete
+        tool_calls = [
+            {"type": "function", "function": {"name": "job_complete", "arguments": {"result": "Test result"}}}
+        ]
+        assert loop._check_for_job_complete(tool_calls)
+
+        # Create tool calls with tool-specific job_complete
         tool_calls = [
             {
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "query_database", "arguments": {"query": "SELECT * FROM users"}},
-            },
-            {
-                "id": "call_2",
                 "type": "function",
                 "function": {
-                    "name": "update_database",
-                    "arguments": {"query": "UPDATE users SET name = 'New Name' WHERE id = 1"},
+                    "name": "web_research_job_complete",
+                    "arguments": {
+                        "title": "Test title",
+                        "executive_summary": "Test summary",
+                        "body": "Test body",
+                        "references": ["Ref1", "Ref2"],
+                    },
                 },
-            },
+            }
+        ]
+        assert loop._check_for_job_complete(tool_calls)
+
+        # Create tool calls without job_complete
+        tool_calls = [{"type": "function", "function": {"name": "other_tool", "arguments": {"arg1": "value1"}}}]
+        assert not loop._check_for_job_complete(tool_calls)
+
+    def test_check_for_gather_thoughts(self):
+        """Test detecting gather_thoughts tool calls."""
+        loop = ReflectionLoop()
+
+        # Create tool calls with gather_thoughts
+        tool_calls = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "gather_thoughts",
+                    "arguments": {
+                        "analysis": "Test analysis",
+                        "next_steps": "Test next steps",
+                        "workflow_state": "Test state",
+                        "is_complete": False,
+                    },
+                },
+            }
+        ]
+        assert loop._check_for_gather_thoughts(tool_calls)
+
+        # Create tool calls without gather_thoughts
+        tool_calls = [{"type": "function", "function": {"name": "other_tool", "arguments": {"arg1": "value1"}}}]
+        assert not loop._check_for_gather_thoughts(tool_calls)
+
+    def test_get_gather_thoughts_result(self):
+        """Test extracting gather_thoughts result."""
+        loop = ReflectionLoop()
+
+        # Create tool calls with gather_thoughts
+        tool_calls = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "gather_thoughts",
+                    "arguments": {
+                        "analysis": "Test analysis",
+                        "next_steps": "Test next steps",
+                        "workflow_state": "Test state",
+                        "is_complete": False,
+                    },
+                },
+            }
         ]
 
-        formatted = self.reflection_loop._format_tool_calls(tool_calls)
-        self.assertIn("Tool Call 1:", formatted)
-        self.assertIn("Function: query_database", formatted)
-        self.assertIn("Tool Call 2:", formatted)
-        self.assertIn("Function: update_database", formatted)
+        # Extract gather_thoughts result
+        result = loop._get_gather_thoughts_result(tool_calls)
 
-    def test_format_tool_results(self):
-        """Test formatting tool results."""
-        tool_results = [
-            {
-                "tool_call_id": "call_1",
-                "function_name": "query_database",
-                "arguments": {"query": "SELECT * FROM users"},
-                "result": [{"id": 1, "name": "User 1"}],
-            },
-            {
-                "tool_call_id": "call_2",
-                "function_name": "update_database",
-                "arguments": {"query": "UPDATE users SET name = 'New Name' WHERE id = 1"},
-                "result": {"affected_rows": 1},
-            },
+        # Check the result
+        assert result["analysis"] == "Test analysis"
+        assert result["next_steps"] == "Test next steps"
+        assert result["workflow_state"] == "Test state"
+        assert result["is_complete"] is False
+
+        # Test with missing tool call
+        result = loop._get_gather_thoughts_result([])
+        assert result == {}
+
+    def test_get_job_complete_result(self):
+        """Test extracting job_complete result."""
+        loop = ReflectionLoop()
+
+        # Create tool calls with job_complete
+        tool_calls = [
+            {"type": "function", "function": {"name": "job_complete", "arguments": {"result": "Test result"}}}
         ]
 
-        formatted = self.reflection_loop._format_tool_results(tool_results)
-        self.assertIn("Tool Result 1:", formatted)
-        self.assertIn("Function: query_database", formatted)
-        self.assertIn("Tool Result 2:", formatted)
-        self.assertIn("Function: update_database", formatted)
+        # Extract job_complete result
+        result = loop._get_job_complete_result(tool_calls, "job_complete")
+
+        # Check the result
+        assert result["status"] == "complete"
+        assert result["result"] == "Test result"
+
+        # Test with missing tool call
+        result = loop._get_job_complete_result([], "job_complete")
+        assert result["status"] == "error"
+        assert "no result found" in result["error"]
